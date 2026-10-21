@@ -1,0 +1,8 @@
+# dsh-whale-combo — bundle patch.
+#
+# One insert row mounts the Host half (index.js), which exists only to own the
+# plugin identity; every visible part is the Client half. package.json's
+# `dsh.client` declaration binds the browser half to this row by package name.
+- insert:
+    - id: dsh-whale-combo
+      name: dsh-whale-combo
