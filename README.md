@@ -98,7 +98,7 @@ dsh plugin --profile <profile> add link:<clone 后的绝对路径>
 | `client.js` | 浏览器半身：注册到 `shell.overlay`，渲染卡片 / 弹幕 / 兜底小圆钮 |
 | `cordis.patch.yml` | bundle patch：插入 Host 行 |
 | `locale/{zh,en}.json` | 插件页标题 / 描述 |
-| `icon.svg` | 插件图标（原创绘制） |
+| `icon.png` | 插件图标（448×448 PNG，216 KB，随包分发） |
 
 浏览器半身是手写的 `window.__ModuleLoader__` 模块，不需要构建步骤，只依赖 shell 自带的 `react`。
 
