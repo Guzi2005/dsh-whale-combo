@@ -1,5 +1,9 @@
 # dsh-whale-combo — 鲸鱼娘 · 合并数据卡
 
+[![npm version](https://img.shields.io/npm/v/dsh-whale-combo.svg)](https://www.npmjs.com/package/dsh-whale-combo)
+[![license](https://img.shields.io/npm/l/dsh-whale-combo.svg)](LICENSE)
+[![GitHub](https://img.shields.io/badge/GitHub-Guzi2005%2Fdsh--whale--combo-181717?logo=github)](https://github.com/Guzi2005/dsh-whale-combo)
+
 一个 [DeepSeek Harness](https://github.com/deepseek-ai)（DSH）Web 插件：在右下角 **dsh-whale-widget**
 的鲸鱼娘旁边，显示一张**深色毛玻璃**横向状态卡（余额 / 今日 / 缓存命中 / 峰·谷），并在每次计费时从她
 头顶向上发射**深蓝色扣费弹幕**。界面在 `shell.overlay` 浮层里，原生 React 渲染，可在插件页启用 / 停用 / 卸载。
@@ -61,14 +65,28 @@
 
 ## 安装
 
-1. 安装依赖插件 `dsh-whale-widget`、`dsh-damage-pulse`（例如 `dsh plugin --profile <profile> add dsh-whale-widget dsh-damage-pulse`）。
-2. 把本仓库克隆到任意本地目录。
-3. 用 DSH 的 Plugin Manager 安装本地目录：
-   - 设置 → 插件 → 安装本地包 → 选择本目录；或
-   - `dsh plugin --profile <profile> add link:<本目录绝对路径>`
-4. 刷新页面 / 重开客户端。
+先装依赖插件，再装本插件：
 
-卸载：Plugin Manager 移除本 bundle，然后删除目录。
+```bash
+# 1) 依赖（如果还没装）
+dsh plugin --profile <profile> add dsh-whale-widget dsh-damage-pulse
+
+# 2) 本插件（npm）
+dsh plugin --profile <profile> add dsh-whale-combo
+```
+
+然后刷新页面 / 重开客户端。
+
+也可以从源码 / 本地目录安装：
+
+```bash
+git clone https://github.com/Guzi2005/dsh-whale-combo.git
+dsh plugin --profile <profile> add link:<clone 后的绝对路径>
+```
+
+或者在 **设置 → 插件 → 安装本地包** 里选择本目录。
+
+卸载：Plugin Manager 移除本 bundle 即可。
 
 ## 实现
 

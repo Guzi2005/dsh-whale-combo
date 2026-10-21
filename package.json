@@ -1,8 +1,8 @@
 {
   "name": "dsh-whale-combo",
   "version": "1.0.0",
-  "private": true,
   "description": "在鲸鱼娘旁显示毛玻璃拟态的状态气泡（余额 ¥ / 今日 ¥ / 缓存命中 / 峰谷，本轮在悬停提示里），并在每次计费时播放命中·输出·未命中扣费弹幕；Ctrl+Alt+D 可显示 damage-pulse 原悬浮卡。数据合并自 dsh-damage-pulse 与 dsh-whale-widget。",
+  "author": "谷子Guzi",
   "type": "module",
   "exports": {
     ".": "./index.js",
@@ -16,6 +16,7 @@
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
+    "docs/preview.png",
     "README.md",
     "LICENSE"
   ],
@@ -44,5 +45,11 @@
     "url": "git+https://github.com/Guzi2005/dsh-whale-combo.git"
   },
   "homepage": "https://github.com/Guzi2005/dsh-whale-combo#readme",
+  "bugs": {
+    "url": "https://github.com/Guzi2005/dsh-whale-combo/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "license": "MIT"
 }
