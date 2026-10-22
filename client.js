@@ -2,14 +2,18 @@
  * dsh-whale-combo — browser half.
  *
  * One surface, contributed to the frame-wide `shell.overlay` slot:
- *   - a white, WeChat-style status bubble anchored to the left of the
- *     dsh-whale-widget whale girl, merging 余额 / 今日 / 本轮 / 缓存命中 / 峰谷
- *     from dsh-damage-pulse and dsh-whale-widget host routes;
- *   - charge danmaku (命中 · 输出 · 未命中 -0.00xx¥) rising beside the whale,
- *     replayed from the damage-pulse charge-event stream exactly like the
- *     previous patch-injected layer;
- *   - damage-pulse's own floating card stays hidden by default (Ctrl+Alt+D
- *     toggles it) so there is only one balance surface on screen.
+ *   - a frosted status bubble above the dsh-whale-widget whale girl, merging
+ *     余额 / 今日 / 缓存命中 / 峰谷 from the dsh-damage-pulse and
+ *     dsh-whale-widget host routes;
+ *   - charge danmaku (命中 · 输出 · 未命中 -0.00xx¥) rising from her head;
+ *   - optional 🎵 LET ME GO 🎵 lyric danmaku, read from the thinking block;
+ *   - whale menu integration: role tiles, glass opacity, whole-bar opacity and
+ *     the lyric toggle (the menu itself stays upstream-owned).
+ *
+ * This bundle is a layer on top of the two upstream plugins: it does not copy
+ * their code or artwork, so both must stay enabled (routes + whale DOM are the
+ * integration contract below). The upstream floating card stays hidden so there
+ * is only one balance surface on screen.
  *
  * Integration contract with dsh-whale-widget (documented, version-pinned in
  * README): the whale character is `.dshwv-root .dshwv-img`; clicking it toggles
@@ -17,8 +21,7 @@
  * launcher pill in the corner instead of disappearing.
  *
  * Hand-written ModuleLoader bundle: no build step, only the `react` the shell
- * already provides. Literal colours are deliberate artwork (the white bubble is
- * the requested look and must stay white on dark themes).
+ * already provides.
  */
 window.__ModuleLoader__.load({
   id: 'dsh-whale-combo',
@@ -47,9 +50,10 @@ window.__ModuleLoader__.load({
         'output': '输出',
         'miss': '未命中',
         'glassAlpha': '毛玻璃透明度',
+        'barAlpha': '整体透明度',
         'role': '角色',
         'roleImport': '导入角色',
-        'letmegoTip': '开启后读取正在输出的文本，捕捉 ≤5 词的短句（尤其 Let me 开头），用弹幕飘出来',
+        'letmegoTip': '开启后只读思考块的真句首，捕捉 ≤8 个英文单词/汉字的短句（Let me / Now / I 开头优先），用弹幕飘出来',
         'meta.title': '鲸鱼娘 · 合并数据卡',
         'meta.description': '在鲸鱼娘旁显示余额 / 今日 / 本轮 / 缓存命中 / 峰谷的白色状态气泡，并在计费时播放扣费弹幕。',
       },
@@ -67,9 +71,10 @@ window.__ModuleLoader__.load({
         'output': 'output',
         'miss': 'miss',
         'glassAlpha': 'Glass opacity',
+        'barAlpha': 'Bar opacity',
         'role': 'Role',
         'roleImport': 'Import role',
-        'letmegoTip': 'Watch the streamed output and float ≤5-word clauses (especially ones starting with "Let me") as danmaku',
+        'letmegoTip': 'Read only the thinking block: float ≤8-word clauses from true sentence starts (Let me / Now / I first) as danmaku',
         'meta.title': 'Whale Girl · Merged Card',
         'meta.description': 'White status bubble beside the whale girl: balance, today, this turn, cache hit rate, peak/off-peak, plus charge danmaku.',
       },
@@ -90,8 +95,8 @@ window.__ModuleLoader__.load({
     /* ───────────────────── glass opacity preference ───────────────── */
     // Adjusted from the whale menu slider; the card reads it through CSS vars.
     const ALPHA_KEY = 'dsh-whale-combo:glass-alpha'
-    const ALPHA_MIN = 10
-    const ALPHA_MAX = 80
+    const ALPHA_MIN = 6
+    const ALPHA_MAX = 85
     const ALPHA_DEFAULT = 26
     let alphaValue = null
     const alphaListeners = new Set()
@@ -127,6 +132,88 @@ window.__ModuleLoader__.load({
     function subscribeGlassAlpha(listener) {
       alphaListeners.add(listener)
       return () => alphaListeners.delete(listener)
+    }
+    function applyGlassAlpha(value) {
+      const percent = Math.max(ALPHA_MIN, Math.min(ALPHA_MAX, Number(value) || ALPHA_DEFAULT))
+      const alpha = percent / 100
+      const vars = {
+        '--wc2-glass': 'rgba(24,38,62,' + alpha.toFixed(2) + ')',
+        '--wc2-glass-tail': 'rgba(36,52,82,' + Math.min(0.9, alpha + 0.12).toFixed(2) + ')',
+        '--wc2-sheen': 'rgba(255,255,255,' + (0.03 + alpha * 0.45).toFixed(3) + ')',
+        '--wc2-sheen2': 'rgba(255,255,255,' + (0.01 + alpha * 0.16).toFixed(3) + ')',
+      }
+      for (const card of Array.from(document.querySelectorAll('.wc2-card'))) {
+        for (const name of Object.keys(vars)) {
+          try {
+            card.style.setProperty(name, vars[name])
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+      return percent
+    }
+
+    /* ───────────────── bar overall opacity preference ──────────────── */
+    // Second slider: fades the whole bar (glass, text and tail). 0 keeps only a
+    // faint ghost so the bar is practically invisible yet still clickable.
+    const BAR_ALPHA_KEY = 'dsh-whale-combo:bar-alpha'
+    const BAR_ALPHA_MIN = 0
+    const BAR_ALPHA_MAX = 100
+    const BAR_ALPHA_DEFAULT = 100
+    const BAR_OPACITY_FLOOR = 0.02
+    let barAlphaValue = null
+    const barAlphaListeners = new Set()
+    function barAlpha() {
+      if (barAlphaValue != null) return barAlphaValue
+      let value = BAR_ALPHA_DEFAULT
+      try {
+        const stored = Number(window.localStorage.getItem(BAR_ALPHA_KEY))
+        if (Number.isFinite(stored) && stored >= BAR_ALPHA_MIN && stored <= BAR_ALPHA_MAX) value = Math.round(stored)
+      } catch {
+        /* private mode */
+      }
+      barAlphaValue = value
+      return value
+    }
+    function setBarAlpha(next) {
+      const value = Math.max(BAR_ALPHA_MIN, Math.min(BAR_ALPHA_MAX, Math.round(Number(next) || 0)))
+      barAlphaValue = value
+      try {
+        window.localStorage.setItem(BAR_ALPHA_KEY, String(value))
+      } catch {
+        /* private mode */
+      }
+      for (const listener of Array.from(barAlphaListeners)) {
+        try {
+          listener(value)
+        } catch {
+          /* ignore */
+        }
+      }
+      return value
+    }
+    function subscribeBarAlpha(listener) {
+      barAlphaListeners.add(listener)
+      return () => barAlphaListeners.delete(listener)
+    }
+    function barOpacity(value) {
+      const raw = Number(value)
+      const percent = Number.isFinite(raw) ? Math.max(BAR_ALPHA_MIN, Math.min(BAR_ALPHA_MAX, raw)) : BAR_ALPHA_DEFAULT
+      return BAR_OPACITY_FLOOR + (percent / 100) * (1 - BAR_OPACITY_FLOOR)
+    }
+    function applyBarAlpha(value) {
+      const raw = Number(value)
+      const percent = Number.isFinite(raw) ? Math.max(BAR_ALPHA_MIN, Math.min(BAR_ALPHA_MAX, raw)) : BAR_ALPHA_DEFAULT
+      const opacity = barOpacity(percent).toFixed(3)
+      for (const card of Array.from(document.querySelectorAll('.wc2-card'))) {
+        try {
+          card.style.setProperty('--wc2-bar-opacity', opacity)
+        } catch {
+          /* ignore */
+        }
+      }
+      return percent
     }
 
     /* ─────────────────── 🎵 LET ME GO 🎵 toggle ───────────────────── */
@@ -171,6 +258,75 @@ window.__ModuleLoader__.load({
     let glassPreview = null
     function setGlassPreview(fn) {
       glassPreview = typeof fn === 'function' ? fn : null
+    }
+
+    // Fraction of the widget artwork's height that is transparent at the top.
+    // The card is placed above that edge so it never covers the sticker's
+    // opaque pixels (default whale art has margin; role-head presets have none).
+    const opaqueTopCache = new Map()
+    let cardReflow = null
+    function setCardReflow(fn) {
+      cardReflow = typeof fn === 'function' ? fn : null
+    }
+    function opaqueTopFraction(url) {
+      const key = String(url || '')
+      if (!key) return 0.14
+      const cached = opaqueTopCache.get(key)
+      if (typeof cached === 'number') return cached
+      if (cached === 'pending') return 0.14
+      opaqueTopCache.set(key, 'pending')
+      try {
+        const probe = new Image()
+        probe.onload = () => {
+          let fraction = 0
+          try {
+            const size = 64
+            const canvas = document.createElement('canvas')
+            canvas.width = size
+            canvas.height = size
+            const context = canvas.getContext('2d')
+            if (context) {
+              context.clearRect(0, 0, size, size)
+              context.drawImage(probe, 0, 0, size, size)
+              const data = context.getImageData(0, 0, size, size).data
+              fraction = 1
+              for (let y = 0; y < size; y += 1) {
+                let opaque = false
+                for (let x = 0; x < size; x += 1) {
+                  if (data[(y * size + x) * 4 + 3] > 16) {
+                    opaque = true
+                    break
+                  }
+                }
+                if (opaque) {
+                  fraction = y / size
+                  break
+                }
+              }
+            }
+          } catch {
+            fraction = 0
+          }
+          opaqueTopCache.set(key, fraction)
+          try {
+            if (cardReflow) cardReflow()
+          } catch {
+            /* ignore */
+          }
+        }
+        probe.onerror = () => {
+          opaqueTopCache.set(key, 0)
+          try {
+            if (cardReflow) cardReflow()
+          } catch {
+            /* ignore */
+          }
+        }
+        probe.src = key
+      } catch {
+        opaqueTopCache.set(key, 0)
+      }
+      return 0.14
     }
 
     /* ──────────────────────── pure helpers ────────────────────────── */
@@ -257,13 +413,27 @@ window.__ModuleLoader__.load({
     }
 
     /* ─────────── 🎵 LET ME GO 🎵 lyric capture (token-free) ────────── */
-    // Splits the streamed assistant text into clauses (sentence start .. first
-    // punctuation) and keeps clauses of at most five English words / CJK chars.
-    // Phrases starting with "let me" are pulled to the front.
-    const LYRIC_MAX_TOKENS = 5
-    const LYRIC_MIN_TOKENS = 2
+    // Only the thinking block is read. Clauses run from a true sentence start to
+    // the next punctuation and may hold at most eight English words / CJK chars.
+    // "Let me", "Now" and "I" openers are emitted first.
+    const LYRIC_MAX_TOKENS = 8
+    const LYRIC_MIN_TOKENS = 1
     const LYRIC_DENY = /[`<>{}[\]|\\/=+_*#~^$@]|https?:|www\./i
     const LYRIC_BOUNDARY = /[。．.!！?？;；:：\n\r…]/
+    function lyricIsBoundary(text, index) {
+      const ch = text[index]
+      if (!ch) return false
+      if (/[。！？；：…\n\r—–、，,]/.test(ch)) return true
+      if (ch === '.') {
+        const previous = text[index - 1] || ''
+        const next = text[index + 1] || ''
+        // "client.js" / "v1.0.6" stay together; sentence periods still split.
+        if (/[A-Za-z0-9]/.test(previous) && /[A-Za-z0-9]/.test(next)) return false
+        return true
+      }
+      if (/[?？!！;；:：!]/.test(ch)) return true
+      return false
+    }
     function lyricTokenCount(segment) {
       const words = segment.match(/[A-Za-z][A-Za-z'’\-]*/g)
       const chars = segment.match(/[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/g)
@@ -271,42 +441,35 @@ window.__ModuleLoader__.load({
     }
     function lyricClean(segment) {
       return String(segment || '')
-        .replace(/^[\s>*#\-–—•·]+/, '')
+        .replace(/^[\s>*#\-–—•·'‘’"“”`´]+/, '')
+        // "1. xxx" / "2) xxx" / "（3）xxx" / "① xxx" — drop the ordinal, keep the text.
+        .replace(/^(?:\(?\d{1,2}[.)、:：]|[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳]|[（(]\d{1,2}[)）])\s*/, '')
+        .replace(/^[\s>*#\-–—•·'‘’"“”`´]+/, '')
         .replace(/[\s*_~]+$/, '')
+        .replace(/['‘’"“”`´]+$/, '')
+        .replace(/[\s*_~—–\-,.;:。；：…、，'‘’"“”`´]+$/, '')
         .replace(/\s+/g, ' ')
         .trim()
     }
     function lyricCandidates(text) {
-      const source = String(text || '').replace(/🎵/g, ' ')
-      const segments = source.split(LYRIC_BOUNDARY)
-      const out = []
-      for (const raw of segments) {
-        const phrase = lyricClean(raw)
-        if (!phrase) continue
-        if (!/[A-Za-z\u3400-\u9fff]/.test(phrase)) continue
-        if (LYRIC_DENY.test(phrase)) continue
-        if (/[()[\]{}"“”‘’]/.test(phrase)) continue
-        const tokens = lyricTokenCount(phrase)
-        if (tokens < LYRIC_MIN_TOKENS || tokens > LYRIC_MAX_TOKENS) continue
-        out.push({
-          phrase,
-          key: phrase.toLowerCase(),
-          priority: /^let\s+me\b/i.test(phrase) ? 2 : /^let\b/i.test(phrase) ? 1 : 0,
-        })
-      }
-      out.sort((a, b) => b.priority - a.priority)
-      return out
+      const phrase = lyricClean(String(text || '').replace(/🎵/g, ' '))
+      if (!phrase) return []
+      if ((phrase.match(/[A-Za-z\u3400-\u9fff]/g) || []).length < 2) return []
+      if (LYRIC_DENY.test(phrase)) return []
+      if (/[()[\]{}"“”‘’]/.test(phrase)) return []
+      // A lowercase English opener is still a lyric; capitalise it for display.
+      const shown = /^[a-z]/.test(phrase) ? phrase.charAt(0).toUpperCase() + phrase.slice(1) : phrase
+      const tokens = lyricTokenCount(shown)
+      if (tokens < LYRIC_MIN_TOKENS || tokens > LYRIC_MAX_TOKENS) return []
+      return [
+        {
+          phrase: shown,
+          key: shown.toLowerCase(),
+          priority: /^let\s+me\b/i.test(shown) ? 3 : /^now\b/i.test(shown) ? 2 : /^i\b/i.test(shown) ? 1 : 0,
+        },
+      ]
     }
-    // The conversation scroller is hosted by the chat UI; the assistant streams
-    // into its last markdown block, which is the only text this watcher reads.
-    function readStreamNote() {
-      const scroller = document.querySelector('[data-conversation-scroll]')
-      if (!scroller) return null
-      const blocks = scroller.querySelectorAll('[class*="markdown"]')
-      if (!blocks.length) return null
-      const last = blocks[blocks.length - 1]
-      return { node: last, text: last.innerText || '' }
-    }
+
 
     /* ───────────────────── minimal line icons ─────────────────────── */
     const ICONS = {
@@ -353,7 +516,6 @@ window.__ModuleLoader__.load({
     const CSS = `
 /* Stay out of the way of the whale's own dance: no host chrome is restyled. */
 [data-token-monitor-balance]{display:none !important}
-html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.96 !important}
 /* Whale-widget hides its ☰ trigger until pointer hover; the previous merged
    layer kept it visible and the menu is the only way to change character /
    size / sound, so keep that affordance here. */
@@ -366,7 +528,7 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
 .wc2-role-grid{display:flex;flex-wrap:wrap;gap:6px;flex:1;min-width:0}
 .wc2-role-tile{width:36px;height:36px;flex:0 0 auto;padding:0;border:1px solid rgba(32,49,112,.28);border-radius:6px;
   background:#e8ecf7;cursor:pointer;overflow:hidden;position:relative;box-sizing:border-box}
-.wc2-role-tile img{width:100%;height:100%;object-fit:cover;display:block}
+.wc2-role-tile img{width:100%;height:100%;object-fit:contain;display:block}
 .wc2-role-tile:hover{border-color:rgba(32,49,112,.55)}
 .wc2-role-tile.wc2-role-cur{outline:2px solid #203170;outline-offset:1px;border-color:#203170}
 .wc2-role-add{display:flex;align-items:center;justify-content:center;background:transparent;border-style:dashed;
@@ -398,7 +560,7 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
   backdrop-filter:blur(26px) saturate(180%);
   -webkit-backdrop-filter:blur(26px) saturate(180%)}
 .wc2-card.wc2-tail-left::after{right:auto;left:18px}
-.wc2-card.wc2-open{opacity:1;transform:translateY(0) scale(1);pointer-events:auto}
+.wc2-card.wc2-open{opacity:var(--wc2-bar-opacity,1);transform:translateY(0) scale(1);pointer-events:auto}
 .wc2-sec{display:flex;align-items:center;gap:5px;min-width:0}
 .wc2-ico{width:14px;height:14px;flex:none;display:block;color:#a9c2f4;
   filter:drop-shadow(0 1px 1px rgba(4,10,22,.35))}
@@ -434,6 +596,9 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
   text-shadow:0 1px 3px rgba(0,0,0,.72),0 0 10px rgba(170,180,194,.28)}
 .wc2-float.wc2-miss .wc2-float-label{color:#8d97a5;text-shadow:0 1px 3px rgba(0,0,0,.72)}
 .wc2-float.wc2-output .wc2-float-amt{color:#5b93ff}
+.wc2-float.wc2-lyric{width:auto}
+.wc2-float.wc2-lyric .wc2-float-amt{width:auto;text-align:right;font-size:19px;color:#7fb0ff;padding-left:2px;
+  text-shadow:0 1px 3px rgba(0,0,0,.72),0 0 12px rgba(96,150,255,.42)}
 @keyframes wc2-float-rise{
   0%{opacity:0;transform:translate(0,12px) scale(.55)}
   12%{opacity:1;transform:translate(0,3px) scale(1.07)}
@@ -441,6 +606,39 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
   62%{opacity:1;transform:translate(0,-82px);animation-timing-function:linear}
   100%{opacity:0;transform:translate(0,-118px) scale(.96)}}
 
+/* 小鲸鱼记账 (☰ page 2): same look as the menu's first page, tidy, no overflow. */
+.dshwv-usage-sub{font-size:12px!important;color:#203170;max-height:none!important;padding:2px 0 8px!important}
+.dshwv-usage-sub *{min-width:0}
+.dshwv-usage-sub .dshwv-usage-subtitle{display:none!important}
+.dshwv-usage-sub .dshwv-usage-sec{display:flex;align-items:center;justify-content:space-between;gap:8px;
+  overflow:hidden;white-space:nowrap;margin:6px 0 2px!important;padding-bottom:3px!important;color:#203170;
+  font-weight:600;border-bottom:1px solid rgba(32,49,112,.18)!important}
+.dshwv-usage-sub .dshwv-usage-sec > *:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.dshwv-usage-sub .dshwv-usage-total{flex:0 0 auto;font-size:13px!important;font-weight:700;font-variant-numeric:tabular-nums}
+.dshwv-usage-sub .dshwv-usage-row{display:flex;align-items:center;gap:8px;padding:3px 2px!important;
+  font-variant-numeric:tabular-nums;border-bottom:1px solid rgba(32,49,112,.10)}
+.dshwv-usage-sub .dshwv-usage-row:hover{background:rgba(32,49,112,.06)}
+.dshwv-usage-sub .dshwv-usage-row > *:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dshwv-usage-sub .dshwv-usage-row > *:last-child{flex:0 0 auto;white-space:nowrap}
+.dshwv-usage-sub .dshwv-usage-model{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dshwv-usage-sub .dshwv-usage-more,
+.dshwv-usage-sub .dshwv-usage-hint{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dshwv-usage-sub .dshwv-usage-scroll{border:1px solid rgba(32,49,112,.14)!important;border-radius:6px!important;
+  background:transparent!important;max-height:8.8em;overflow-y:auto!important;padding:2px 6px!important;margin:3px 0 4px!important}
+.dshwv-usage-sub .dshwv-usage-scroll::-webkit-scrollbar{width:6px}
+.dshwv-usage-sub .dshwv-usage-scroll::-webkit-scrollbar-thumb{background:rgba(32,49,112,.24);border-radius:3px}
+.dshwv-usage-sub .dshwv-usage-row.wc2-usage-zero{display:none!important}
+.wc2-usage-zero-note{color:#8a94a6;font-size:11px;text-align:right;padding:1px 4px 2px}
+.wc2-ledger-foldhead{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;
+  margin:0 0 2px;padding:5px 2px;border:none;border-bottom:1px solid rgba(32,49,112,.18);
+  background:transparent;color:#203170;font-size:12px;font-weight:600;font:inherit;cursor:pointer;text-align:left}
+.wc2-ledger-foldhead:hover{color:#2f4488}
+.wc2-ledger-foldhead span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wc2-ledger-foldhead span:last-child{flex:0 0 auto;opacity:.7}
+.wc2-ledger-fold{margin-bottom:2px;overflow:hidden}
+.wc2-ledger-fold .dshwv-menu-row{flex-wrap:wrap;row-gap:2px}
+.wc2-ledger-fold .dshwv-menu-row > *{min-width:0}
+.wc2-ledger-fold[data-open="0"]{display:none}
 .wc2-launch{position:fixed;z-index:10001;right:18px;bottom:96px;width:44px;height:44px;border-radius:999px;
   border:1px solid rgba(255,255,255,.22);cursor:pointer;padding:0;
   background:linear-gradient(160deg,#2f7bd6,#1a4f9c);color:#fff;
@@ -471,6 +669,9 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
 
     function installWhaleMenu(translate) {
       let alphaRow = null
+      let alphaSync = null
+      let barRow = null
+      let barSync = null
       let letmegoRow = null
       let gridRow = null
       let gridEl = null
@@ -686,12 +887,18 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
         value.className = 'wc2-alpha-value'
         value.textContent = glassAlpha() + '%'
         input.addEventListener('input', () => {
-          value.textContent = setGlassAlpha(input.value) + '%'
+          const percent = setGlassAlpha(input.value)
+          value.textContent = percent + '%'
+          applyGlassAlpha(percent)
           try {
             if (glassPreview) glassPreview()
           } catch {
             /* ignore */
           }
+        })
+        alphaSync = subscribeGlassAlpha(current => {
+          input.value = String(current)
+          value.textContent = current + '%'
         })
         next.appendChild(label)
         next.appendChild(input)
@@ -701,6 +908,123 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
         if (anchor && anchor.parentNode === view) view.insertBefore(next, anchor.nextSibling)
         else view.appendChild(next)
         alphaRow = next
+      }
+      const ensureBarRow = view => {
+        if (barRow && barRow.isConnected && view.contains(barRow)) return
+        const next = document.createElement('div')
+        next.className = 'dshwv-menu-row wc2-bar-row'
+        const label = document.createElement('span')
+        label.textContent = translate('barAlpha')
+        const input = document.createElement('input')
+        input.type = 'range'
+        input.min = String(BAR_ALPHA_MIN)
+        input.max = String(BAR_ALPHA_MAX)
+        input.step = '1'
+        input.value = String(barAlpha())
+        input.className = 'dshwv-range'
+        input.setAttribute('aria-label', translate('barAlpha'))
+        const value = document.createElement('span')
+        value.className = 'wc2-alpha-value'
+        value.textContent = barAlpha() + '%'
+        input.addEventListener('input', () => {
+          const percent = setBarAlpha(input.value)
+          value.textContent = percent + '%'
+          applyBarAlpha(percent)
+          try {
+            if (glassPreview) glassPreview()
+          } catch {
+            /* ignore */
+          }
+        })
+        barSync = subscribeBarAlpha(current => {
+          input.value = String(current)
+          value.textContent = current + '%'
+        })
+        next.appendChild(label)
+        next.appendChild(input)
+        next.appendChild(value)
+        if (alphaRow && alphaRow.parentNode === view) view.insertBefore(next, alphaRow.nextSibling)
+        else {
+          const rows = Array.from(view.querySelectorAll('.dshwv-menu-row'))
+          const anchor = rows.find(item => (item.textContent || '').trim().indexOf('大小') === 0)
+          if (anchor && anchor.parentNode === view) view.insertBefore(next, anchor.nextSibling)
+          else view.appendChild(next)
+        }
+        barRow = next
+      }
+      const LEDGER_FOLD_KEY = 'dsh-whale-combo:ledger-fold'
+      const ledgerFoldOpen = () => {
+        try {
+          return window.localStorage.getItem(LEDGER_FOLD_KEY) === '1'
+        } catch {
+          return false
+        }
+      }
+      const setLedgerFold = open => {
+        try {
+          window.localStorage.setItem(LEDGER_FOLD_KEY, open ? '1' : '0')
+        } catch {
+          /* private mode */
+        }
+      }
+      const enhanceLedger = () => {
+        const sub = document.querySelector('.dshwv-usage-sub')
+        if (!sub) return
+        if (sub.getAttribute('data-wc2-ledger') !== '1') {
+          sub.setAttribute('data-wc2-ledger', '1')
+          const body = sub.querySelector('.dshwv-usagebody')
+          const wrap = document.createElement('div')
+          wrap.className = 'wc2-ledger-fold'
+          wrap.setAttribute('data-open', ledgerFoldOpen() ? '1' : '0')
+          const head = document.createElement('button')
+          head.type = 'button'
+          head.className = 'wc2-ledger-foldhead'
+          const label = document.createElement('span')
+          label.textContent = '模型 · 提醒 · 预算 · 自定义 API'
+          const arrow = document.createElement('span')
+          arrow.textContent = ledgerFoldOpen() ? '▾' : '▸'
+          head.appendChild(label)
+          head.appendChild(arrow)
+          head.addEventListener('click', event => {
+            event.stopPropagation()
+            const open = wrap.getAttribute('data-open') === '1'
+            wrap.setAttribute('data-open', open ? '0' : '1')
+            arrow.textContent = open ? '▸' : '▾'
+            setLedgerFold(!open)
+          })
+          // Pull the static settings rows (everything before the usage body)
+          // into one collapsed group so the page starts with the numbers.
+          const moved = []
+          for (const child of Array.from(sub.children)) {
+            if (child === body) break
+            if (child.classList.contains('dshwv-usage-subtitle')) continue
+            if (child === head || child === wrap) continue
+            moved.push(child)
+          }
+          if (body) sub.insertBefore(wrap, body)
+          else sub.appendChild(wrap)
+          sub.insertBefore(head, wrap)
+          for (const child of moved) wrap.appendChild(child)
+        }
+        const body = sub.querySelector('.dshwv-usagebody')
+        if (!body) return
+        if (body.querySelector('.dshwv-usagebody')) return
+        let zeros = 0
+        for (const row of Array.from(body.querySelectorAll('.dshwv-usage-scroll .dshwv-usage-row'))) {
+          const text = (row.textContent || '').replace(/\s+/g, ' ')
+          const zero = /[￥¥]\s*0(?:\.0+)?(?:\s|$)/.test(text) && !/[￥¥]\s*[1-9]/.test(text)
+          row.classList.toggle('wc2-usage-zero', zero)
+          if (zero) zeros += 1
+        }
+        for (const note of Array.from(body.querySelectorAll('.wc2-usage-zero-note'))) note.remove()
+        if (zeros > 0) {
+          const note = document.createElement('div')
+          note.className = 'wc2-usage-zero-note'
+          note.textContent = '其余 ' + zeros + ' 天无消费'
+          const scroll = body.querySelector('.dshwv-usage-scroll')
+          if (scroll && scroll.parentNode) scroll.parentNode.insertBefore(note, scroll.nextSibling)
+          else body.appendChild(note)
+        }
       }
       const ensureLetmegoRow = view => {
         if (letmegoRow && letmegoRow.isConnected && view.contains(letmegoRow)) return
@@ -733,7 +1057,9 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
         }
         ensureGridRow(view)
         ensureAlphaRow(view)
+        ensureBarRow(view)
         ensureLetmegoRow(view)
+        enhanceLedger()
       }
       const schedule = () => {
         if (scheduled) return
@@ -756,6 +1082,13 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
           window.removeEventListener('pointerdown', schedule, true)
           try {
             if (alphaRow) alphaRow.remove()
+            if (barRow) barRow.remove()
+            try {
+              if (alphaSync) alphaSync()
+              if (barSync) barSync()
+            } catch {
+              /* ignore */
+            }
             if (letmegoRow) letmegoRow.remove()
             if (gridRow) gridRow.remove()
           } catch {
@@ -792,6 +1125,8 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
         wwTurn: null,
         floatSeq: 0,
         floatQueue: [],
+        lyricQueue: [],
+        lyricLastAt: 0,
         flashTimer: 0,
       }).current
 
@@ -809,55 +1144,130 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
       const [floats, setFloats] = useState([])
       const [glass, setGlass] = useState(glassAlpha())
       useEffect(() => subscribeGlassAlpha(setGlass), [])
+      useEffect(() => {
+        applyGlassAlpha(glass)
+      }, [glass])
+      const [barPercent, setBarPercent] = useState(barAlpha())
+      useEffect(() => subscribeBarAlpha(setBarPercent), [])
+      useEffect(() => {
+        applyBarAlpha(barPercent)
+      }, [barPercent])
+      useEffect(() => {
+        const timer = window.setInterval(() => {
+          const current = glassAlpha()
+          setGlass(previous => (previous === current ? previous : current))
+          const barCurrent = barAlpha()
+          setBarPercent(previous => (previous === barCurrent ? previous : barCurrent))
+        }, 700)
+        return () => window.clearInterval(timer)
+      }, [])
       const [lyricOn, setLyricOn] = useState(letmegoOn())
       useEffect(() => subscribeLetmego(setLyricOn), [])
-      // 🎵 LET ME GO 🎵: watch the streamed assistant block and float short
-      // clauses. Pure client-side text crunching, no model tokens involved.
+
+
+      // 🎵 LET ME GO 🎵: reads ONLY the thinking block and only true sentence
+      // starts (block start / right after punctuation), then floats clauses of
+      // at most eight English words / CJK chars. No model tokens involved.
       useEffect(() => {
         if (!lyricOn) return undefined
         let disposed = false
-        let node = null
-        let baseline = ''
+        const cursors = new Map()
         const seen = new Set()
+        const emit = list => {
+          list.sort((a, b) => b.priority - a.priority)
+          s.lyricLastAt = Date.now()
+          const queue = s.lyricQueue
+          for (const candidate of list) {
+            if (seen.has(candidate.key)) continue
+            seen.add(candidate.key)
+            if (seen.size > 500) seen.delete(seen.values().next().value)
+            queue.push({ phrase: candidate.phrase, priority: candidate.priority })
+          }
+          if (queue.length > 1) queue.sort((a, b) => b.priority - a.priority)
+          if (queue.length > 40) queue.length = 40
+        }
         const tick = () => {
           if (disposed) return
           try {
-            const note = readStreamNote()
-            if (!note) return
-            if (note.node !== node) {
-              node = note.node
-              baseline = note.text
-              return
+            const scroller = document.querySelector('[data-conversation-scroll]')
+            if (!scroller) return
+            const blocks = Array.from(
+              scroller.querySelectorAll('[class*="think"] [class*="markdown"], [class*="thinkBody"] [class*="markdown"]'),
+            ).filter(block => !block.closest('pre'))
+            if (!blocks.length) return
+            for (const block of blocks) {
+              const text = block.innerText || ''
+              const cursor = cursors.get(block) || { scanned: 0 }
+              if (text.length < cursor.scanned) cursor.scanned = 0
+              const region = text.slice(cursor.scanned)
+              const found = []
+              let start = 0
+              for (let index = 0; index < region.length; index += 1) {
+                if (!lyricIsBoundary(region, index)) continue
+                const segment = region.slice(start, index)
+                start = index + 1
+                if (segment) found.push(...lyricCandidates(segment))
+              }
+              // Hold the trailing, not-yet-terminated clause for the next tick.
+              // Short thinking clauses often stream without punctuation: once the
+              // trailing text has been stable for a moment, float it too.
+              const trailing = region.slice(start)
+              const trailingClean = lyricClean(trailing)
+              const trailingTokens = trailingClean ? lyricTokenCount(trailingClean) : 0
+              if (trailing !== cursor.hold) {
+                cursor.hold = trailing
+                cursor.holdAt = Date.now()
+              } else if (trailingClean && trailingTokens >= 1) {
+                const stable = Date.now() - (cursor.holdAt || 0)
+                const atGap = /[\s、，,]$/.test(trailing)
+                const ready =
+                  (trailingTokens >= 2 && (atGap ? stable >= 120 : stable >= 260)) ||
+                  (trailingTokens === 1 && stable >= 300)
+                if (ready) {
+                  const provisional = lyricCandidates(trailingClean)
+                  if (provisional.length) found.push(...provisional)
+                }
+              }
+              cursor.scanned += start
+              cursors.set(block, cursor)
+              if (found.length) emit(found)
             }
-            const text = note.text
-            if (!text || text === baseline) return
-            let appended
-            if (text.length > baseline.length && text.startsWith(baseline)) {
-              appended = text.slice(baseline.length)
-            } else {
-              let i = 0
-              const max = Math.min(baseline.length, text.length)
-              while (i < max && baseline.charCodeAt(i) === text.charCodeAt(i)) i += 1
-              appended = text.slice(i)
-            }
-            baseline = text
-            if (!appended || appended.length > 400) return
-            for (const candidate of lyricCandidates(text.slice(-700))) {
-              if (seen.has(candidate.key)) continue
-              seen.add(candidate.key)
-              if (seen.size > 400) seen.delete(seen.values().next().value)
-              if (s.floatQueue.length > 6) continue
-              spawnFloat('', '🎵' + candidate.phrase + '🎵', 'lyric')
+            if (cursors.size > 8) {
+              const keys = Array.from(cursors.keys())
+              for (const key of keys.slice(0, keys.length - 8)) cursors.delete(key)
             }
           } catch {
             /* never break the widget */
           }
         }
-        const timer = window.setInterval(tick, 320)
+        const timer = window.setInterval(tick, 200)
         return () => {
           disposed = true
           window.clearInterval(timer)
         }
+      }, [lyricOn])
+      // Release buffered lyrics one by one so a burst of captured clauses still
+      // reads as a steady stream of danmaku.
+      useEffect(() => {
+        if (!lyricOn) {
+          if (s.lyricQueue.length) s.lyricQueue.length = 0
+          return undefined
+        }
+        const timer = window.setInterval(() => {
+          try {
+            // After the turn ends, keep singing for at most five more seconds.
+            if (Date.now() - (s.lyricLastAt || 0) > 5000) {
+              if (s.lyricQueue.length) s.lyricQueue.length = 0
+              return
+            }
+            if (!s.lyricQueue.length) return
+            const next = s.lyricQueue.shift()
+            paintLyric(next.phrase)
+          } catch {
+            /* never break the widget */
+          }
+        }, 600)
+        return () => window.clearInterval(timer)
       }, [lyricOn])
       const [, bumpLocale] = useState(0)
 
@@ -903,12 +1313,15 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
         let top
         let tailLeft = false
         if (rect) {
-          // Preferred: float above the whale, shifted right so the bottom tail
-          // sits over her head; the danmaku column rises from the head.
-          // Preferred: sit just above/right of the whale's head, tail touching it.
-          if (rect.top + rect.height * 0.14 - ch >= 8) {
+          // Preferred: sit just above the sticker's opaque top edge (so the card
+          // never clips the artwork), shifted right so the bottom tail still
+          // points at her head; the danmaku column rises from the head.
+          const whale = document.querySelector(WHALE_SELECTOR)
+          const whaleSrc = whale ? String(whale.currentSrc || whale.getAttribute('src') || '') : ''
+          const opaqueTop = rect.top + rect.height * opaqueTopFraction(whaleSrc)
+          if (opaqueTop - ch - 10 >= 8) {
             left = rect.left + 80 - cw
-            top = rect.top + rect.height * 0.14 - ch
+            top = opaqueTop - ch - 10
           } else if (rect.left - gap - cw >= 8) {
             left = rect.left - gap - cw
             top = rect.top + rect.height * 0.38 - ch * 0.5
@@ -1022,6 +1435,17 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
           if (s.mounted) setFloats(list => list.filter(entry => entry.id !== id))
         }, FLOAT_MS + 250)
       }
+      // Lyrics are already paced by their own buffer, so paint them directly
+      // instead of waiting for the charge-danmaku pump.
+      function paintLyric(text) {
+        if (!s.mounted) return
+        s.floatSeq += 1
+        const id = s.floatSeq
+        setFloats(list => list.concat([{ id, label: '', text: '🎵' + text + '🎵', kind: 'lyric' }]))
+        setTimeout(() => {
+          if (s.mounted) setFloats(list => list.filter(entry => entry.id !== id))
+        }, FLOAT_MS + 250)
+      }
       function handleCharge(ev) {
         if (!ev || typeof ev !== 'object') return
         const parts = []
@@ -1122,9 +1546,6 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
         }
         const onKeyDown = e => {
           if (e.key === 'Escape') closeCard()
-          if (e.ctrlKey && e.altKey && (e.key === 'd' || e.key === 'D')) {
-            document.documentElement.classList.toggle('wc2-show-dp')
-          }
         }
         const onResize = () => layout()
         const onVisibility = () => {
@@ -1138,6 +1559,7 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
         document.addEventListener('visibilitychange', onVisibility)
 
         setGlassPreview(openCard)
+        setCardReflow(layout)
         timers.push(setTimeout(() => refreshAll(), 1200))
         timers.push(setInterval(pollCharges, CHARGE_POLL_MS))
         timers.push(setInterval(pumpFloats, FLOAT_QUEUE_MS))
@@ -1195,6 +1617,7 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
         return () => {
           s.mounted = false
           setGlassPreview(null)
+          setCardReflow(null)
           try {
             if (unsubscribe) unsubscribe()
           } catch {
@@ -1243,7 +1666,9 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
               {
                 key: item.id,
                 className:
-                  'wc2-float' + (item.kind === 'miss' ? ' wc2-miss' : item.kind === 'output' ? ' wc2-output' : ''),
+                  'wc2-float' +
+                  (item.kind === 'miss' ? ' wc2-miss' : item.kind === 'output' ? ' wc2-output' : '') +
+                  (item.kind === 'lyric' ? ' wc2-lyric' : ''),
               },
               item.label ? h('span', { className: 'wc2-float-label' }, item.label) : null,
               h('span', { className: 'wc2-float-amt' }, item.text),
@@ -1258,8 +1683,9 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
             style: {
               '--wc2-glass': 'rgba(24,38,62,' + (glass / 100).toFixed(2) + ')',
               '--wc2-glass-tail': 'rgba(36,52,82,' + Math.min(0.9, glass / 100 + 0.12).toFixed(2) + ')',
-              '--wc2-sheen': 'rgba(255,255,255,' + (0.05 + (glass / 100) * 0.36).toFixed(3) + ')',
-              '--wc2-sheen2': 'rgba(255,255,255,' + (0.015 + (glass / 100) * 0.13).toFixed(3) + ')',
+              '--wc2-sheen': 'rgba(255,255,255,' + (0.03 + (glass / 100) * 0.45).toFixed(3) + ')',
+              '--wc2-sheen2': 'rgba(255,255,255,' + (0.01 + (glass / 100) * 0.16).toFixed(3) + ')',
+              '--wc2-bar-opacity': barOpacity(barPercent).toFixed(3),
             },
             role: 'status',
             'aria-live': 'polite',
@@ -1335,6 +1761,34 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
         return () => style.remove()
       }, 'whale-combo: styles')
       ctx.effect(() => installWhaleMenu(t), 'whale-combo: whale menu')
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
