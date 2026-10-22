@@ -35,8 +35,12 @@
 - **可调毛玻璃透明度**：鲸鱼娘 ☰ 菜单里新增「毛玻璃透明度」拉杆（10%–80%），
   **复用 whale-widget 自己的菜单行与滑杆组件**（`.dshwv-menu-row` + `.dshwv-range`），
   拖动即时生效并记到浏览器本地，卡片与尾巴的玻璃底色一起变透 / 变实。
+- **角色库（小方块，一键切换）**：☰ 菜单里的角色不再用下拉菜单，改成一行**可点击的小方块缩略图**
+  （36px、轻微圆角，选中项描边）；点一下立即换角色。末尾的「＋」方块沿用上游的裁剪 / 导入流程，
+  **重建了角色导入**。内置两个预设：**DeepSeek bot**、**长征 bot**（去掉黑底、透明背景，
+  首次运行自动导入为上游角色，之后与手动导入的角色同等对待）。
 - **菜单精简**：☰ 菜单只保留角色、大小、音效与提示、气泡全局开关、吸附与翻转；
-  移除了「资源管理」「角色导入」按钮，以及「避让滚动条」「隐藏菜单按钮」两项设置（☰ 按钮常显）。
+  移除了「资源管理」按钮，以及「避让滚动条」「隐藏菜单按钮」两项设置（☰ 按钮常显）。
 - **稳定定位**：卡片锚定在鲸鱼娘头部右上方（尾巴尖靠近她的头）；使用冻结锚点，鲸鱼娘的呼吸/浮动
   不会带着卡片抖动，只有拖动她或缩放窗口才重新锚定。
 
@@ -50,7 +54,7 @@
 | 点击气泡本身 | 立即刷新数据 |
 | 右键气泡 / `Esc` / 点空白处 | 关闭气泡 |
 | `Ctrl+Alt+D` | 临时显示 / 隐藏 damage-pulse 原来的悬浮卡 |
-| 鲸鱼娘右上角 ☰ | `dsh-whale-widget` 的菜单（角色、大小、音效、吸附…），并新增「毛玻璃透明度」拉杆 |
+| 鲸鱼娘右上角 ☰ | `dsh-whale-widget` 的菜单：角色方块（点击切换 / ＋导入）、大小、毛玻璃透明度、音效、吸附… |
 
 ## 依赖
 
@@ -104,7 +108,8 @@ dsh plugin --profile <profile> add link:<clone 后的绝对路径>
 | 文件 | 作用 |
 |---|---|
 | `index.js` | Host 半身：只拥有插件行身份，无副作用 |
-| `client.js` | 浏览器半身：注册到 `shell.overlay`，渲染卡片 / 弹幕 / 兜底小圆钮 |
+| `client.js` | 浏览器半身：注册到 `shell.overlay`，渲染卡片 / 弹幕 / 兜底小圆钮；内含菜单增强与角色库（预设图片以 data URL 内嵌，`ROLE_PRESET_DATA`） |
+| `assets/preset-*.png` | 角色预设素材（DeepSeek bot / 长征 bot，去黑底透明 PNG；仅供 `client.js` 内嵌来源，不进 npm 包） |
 | `cordis.patch.yml` | bundle patch：插入 Host 行 |
 | `locale/{zh,en}.json` | 插件页标题 / 描述 |
 | `icon.png` | 插件图标（384×384 PNG，透明底，218 KB） |
@@ -112,8 +117,11 @@ dsh plugin --profile <profile> add link:<clone 后的绝对路径>
 浏览器半身是手写的 `window.__ModuleLoader__` 模块，不需要构建步骤，只依赖 shell 自带的 `react`。
 
 集成契约：鲸鱼角色节点选择器为 `.dshwv-root .dshwv-img`（`dsh-whale-widget` 0.4.x）。
-菜单增强也依赖它的 DOM：向 `.dshwv-menu .dshwv-menuview` 注入一行 `.dshwv-menu-row` + `.dshwv-range`，
-并按行文本移除「资源管理 / 避让滚动条 / 隐藏菜单按钮」与 `.dshwv-roleimport` 按钮。
+角色库复用上游的角色系统：`GET/POST /dsh-whale/roles.json` 读写角色、`/dsh-whale/role-image.png?id=…` 取图像、
+`localStorage['dshw-role']` 记住选择；点击方块时优先点击上游自己的角色面板项（走它的 `applyRole` + 命中图重算），
+面板列表未刷新时回退为直接换 `img.src` 并记录选择（下次加载由上游接管）。
+菜单增强也依赖它的 DOM：向 `.dshwv-menu .dshwv-menuview` 注入角色方块行 / `.dshwv-menu-row` + `.dshwv-range`，
+并按行文本移除「资源管理 / 避让滚动条 / 隐藏菜单按钮」，保留（隐藏的）上游角色行以复用其隐藏导入按钮。
 若上游大版本改了这些类名或菜单文案，只需同步 `client.js` 里的 `WHALE_SELECTOR` / `MENU_DROP_PREFIXES` / 注入逻辑。
 
 ## 说明与限制
