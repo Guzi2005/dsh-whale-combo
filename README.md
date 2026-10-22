@@ -4,6 +4,10 @@
 [![license](https://img.shields.io/npm/l/dsh-whale-combo.svg)](LICENSE)
 [![GitHub](https://img.shields.io/badge/GitHub-Guzi2005%2Fdsh--whale--combo-181717?logo=github)](https://github.com/Guzi2005/dsh-whale-combo)
 
+<p align="center">
+  <img src="docs/icon.png" width="112" alt="dsh-whale-combo icon" />
+</p>
+
 一个 [DeepSeek Harness](https://github.com/deepseek-ai)（DSH）Web 插件：在右下角 **dsh-whale-widget**
 的鲸鱼娘旁边，显示一张**深色毛玻璃**横向状态卡（余额 / 今日 / 缓存命中 / 峰·谷），并在每次计费时从她
 头顶向上发射**深蓝色扣费弹幕**。界面在 `shell.overlay` 浮层里，原生 React 渲染，可在插件页启用 / 停用 / 卸载。
@@ -98,7 +102,7 @@ dsh plugin --profile <profile> add link:<clone 后的绝对路径>
 | `client.js` | 浏览器半身：注册到 `shell.overlay`，渲染卡片 / 弹幕 / 兜底小圆钮 |
 | `cordis.patch.yml` | bundle patch：插入 Host 行 |
 | `locale/{zh,en}.json` | 插件页标题 / 描述 |
-| `icon.png` | 插件图标（448×448 PNG，216 KB，随包分发） |
+| `icon.png` | 插件图标（384×384 PNG，透明底，218 KB） |
 
 浏览器半身是手写的 `window.__ModuleLoader__` 模块，不需要构建步骤，只依赖 shell 自带的 `react`。
 
