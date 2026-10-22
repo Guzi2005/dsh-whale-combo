@@ -49,6 +49,7 @@ window.__ModuleLoader__.load({
         'glassAlpha': '毛玻璃透明度',
         'role': '角色',
         'roleImport': '导入角色',
+        'letmegoTip': '开启后读取正在输出的文本，捕捉 ≤5 词的短句（尤其 Let me 开头），用弹幕飘出来',
         'meta.title': '鲸鱼娘 · 合并数据卡',
         'meta.description': '在鲸鱼娘旁显示余额 / 今日 / 本轮 / 缓存命中 / 峰谷的白色状态气泡，并在计费时播放扣费弹幕。',
       },
@@ -68,6 +69,7 @@ window.__ModuleLoader__.load({
         'glassAlpha': 'Glass opacity',
         'role': 'Role',
         'roleImport': 'Import role',
+        'letmegoTip': 'Watch the streamed output and float ≤5-word clauses (especially ones starting with "Let me") as danmaku',
         'meta.title': 'Whale Girl · Merged Card',
         'meta.description': 'White status bubble beside the whale girl: balance, today, this turn, cache hit rate, peak/off-peak, plus charge danmaku.',
       },
@@ -125,6 +127,50 @@ window.__ModuleLoader__.load({
     function subscribeGlassAlpha(listener) {
       alphaListeners.add(listener)
       return () => alphaListeners.delete(listener)
+    }
+
+    /* ─────────────────── 🎵 LET ME GO 🎵 toggle ───────────────────── */
+    const LETMEGO_KEY = 'dsh-whale-combo:letmego'
+    let letmegoValue = null
+    const letmegoListeners = new Set()
+    function letmegoOn() {
+      if (letmegoValue != null) return letmegoValue
+      let value = false
+      try {
+        value = window.localStorage.getItem(LETMEGO_KEY) === '1'
+      } catch {
+        /* private mode */
+      }
+      letmegoValue = value
+      return value
+    }
+    function setLetmego(next) {
+      const value = !!next
+      letmegoValue = value
+      try {
+        window.localStorage.setItem(LETMEGO_KEY, value ? '1' : '0')
+      } catch {
+        /* private mode */
+      }
+      for (const listener of Array.from(letmegoListeners)) {
+        try {
+          listener(value)
+        } catch {
+          /* ignore */
+        }
+      }
+      return value
+    }
+    function subscribeLetmego(listener) {
+      letmegoListeners.add(listener)
+      return () => letmegoListeners.delete(listener)
+    }
+
+    // The opacity slider lives in the whale menu, where the card is usually
+    // closed; dragging it opens the card once so the change is visible.
+    let glassPreview = null
+    function setGlassPreview(fn) {
+      glassPreview = typeof fn === 'function' ? fn : null
     }
 
     /* ──────────────────────── pure helpers ────────────────────────── */
@@ -210,6 +256,58 @@ window.__ModuleLoader__.load({
       return rect
     }
 
+    /* ─────────── 🎵 LET ME GO 🎵 lyric capture (token-free) ────────── */
+    // Splits the streamed assistant text into clauses (sentence start .. first
+    // punctuation) and keeps clauses of at most five English words / CJK chars.
+    // Phrases starting with "let me" are pulled to the front.
+    const LYRIC_MAX_TOKENS = 5
+    const LYRIC_MIN_TOKENS = 2
+    const LYRIC_DENY = /[`<>{}[\]|\\/=+_*#~^$@]|https?:|www\./i
+    const LYRIC_BOUNDARY = /[。．.!！?？;；:：\n\r…]/
+    function lyricTokenCount(segment) {
+      const words = segment.match(/[A-Za-z][A-Za-z'’\-]*/g)
+      const chars = segment.match(/[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/g)
+      return (words ? words.length : 0) + (chars ? chars.length : 0)
+    }
+    function lyricClean(segment) {
+      return String(segment || '')
+        .replace(/^[\s>*#\-–—•·]+/, '')
+        .replace(/[\s*_~]+$/, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+    }
+    function lyricCandidates(text) {
+      const source = String(text || '').replace(/🎵/g, ' ')
+      const segments = source.split(LYRIC_BOUNDARY)
+      const out = []
+      for (const raw of segments) {
+        const phrase = lyricClean(raw)
+        if (!phrase) continue
+        if (!/[A-Za-z\u3400-\u9fff]/.test(phrase)) continue
+        if (LYRIC_DENY.test(phrase)) continue
+        if (/[()[\]{}"“”‘’]/.test(phrase)) continue
+        const tokens = lyricTokenCount(phrase)
+        if (tokens < LYRIC_MIN_TOKENS || tokens > LYRIC_MAX_TOKENS) continue
+        out.push({
+          phrase,
+          key: phrase.toLowerCase(),
+          priority: /^let\s+me\b/i.test(phrase) ? 2 : /^let\b/i.test(phrase) ? 1 : 0,
+        })
+      }
+      out.sort((a, b) => b.priority - a.priority)
+      return out
+    }
+    // The conversation scroller is hosted by the chat UI; the assistant streams
+    // into its last markdown block, which is the only text this watcher reads.
+    function readStreamNote() {
+      const scroller = document.querySelector('[data-conversation-scroll]')
+      if (!scroller) return null
+      const blocks = scroller.querySelectorAll('[class*="markdown"]')
+      if (!blocks.length) return null
+      const last = blocks[blocks.length - 1]
+      return { node: last, text: last.innerText || '' }
+    }
+
     /* ───────────────────── minimal line icons ─────────────────────── */
     const ICONS = {
       wallet: () =>
@@ -279,8 +377,8 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
   font-family:${FONT};font-size:10px;line-height:1;white-space:nowrap;color:#eef4ff;
   max-width:calc(100vw - 24px);
   background:
-    radial-gradient(130% 150% at 10% 0%,rgba(255,255,255,.16),rgba(255,255,255,0) 58%),
-    linear-gradient(155deg,rgba(255,255,255,.07),rgba(255,255,255,.02) 45%,rgba(120,160,235,.05)),
+    radial-gradient(130% 150% at 10% 0%,var(--wc2-sheen, rgba(255,255,255,.14)),rgba(255,255,255,0) 58%),
+    linear-gradient(155deg,var(--wc2-sheen2, rgba(255,255,255,.05)),rgba(255,255,255,.015) 45%,rgba(120,160,235,.04)),
     var(--wc2-glass, rgba(24,38,62,.26));
   box-shadow:
     inset 0 0 0 1px rgba(22,36,58,.42),
@@ -373,6 +471,7 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
 
     function installWhaleMenu(translate) {
       let alphaRow = null
+      let letmegoRow = null
       let gridRow = null
       let gridEl = null
       let roleImportBtn = null
@@ -588,6 +687,11 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
         value.textContent = glassAlpha() + '%'
         input.addEventListener('input', () => {
           value.textContent = setGlassAlpha(input.value) + '%'
+          try {
+            if (glassPreview) glassPreview()
+          } catch {
+            /* ignore */
+          }
         })
         next.appendChild(label)
         next.appendChild(input)
@@ -597,6 +701,27 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
         if (anchor && anchor.parentNode === view) view.insertBefore(next, anchor.nextSibling)
         else view.appendChild(next)
         alphaRow = next
+      }
+      const ensureLetmegoRow = view => {
+        if (letmegoRow && letmegoRow.isConnected && view.contains(letmegoRow)) return
+        const next = document.createElement('div')
+        next.className = 'dshwv-menu-row wc2-lyric-row'
+        const label = document.createElement('span')
+        label.textContent = '🎵 LET ME GO 🎵'
+        const input = document.createElement('input')
+        input.type = 'checkbox'
+        input.className = 'dshwv-check'
+        input.checked = letmegoOn()
+        input.title = translate('letmegoTip')
+        input.setAttribute('aria-label', 'LET ME GO')
+        input.addEventListener('change', () => setLetmego(input.checked))
+        next.appendChild(label)
+        next.appendChild(input)
+        const rows = Array.from(view.querySelectorAll('.dshwv-menu-row'))
+        const anchor = rows.find(item => (item.textContent || '').trim().indexOf('大小') === 0)
+        if (anchor && anchor.parentNode === view) view.insertBefore(next, anchor.nextSibling)
+        else view.appendChild(next)
+        letmegoRow = next
       }
       const scan = () => {
         const menu = document.querySelector('.dshwv-menu')
@@ -608,6 +733,7 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
         }
         ensureGridRow(view)
         ensureAlphaRow(view)
+        ensureLetmegoRow(view)
       }
       const schedule = () => {
         if (scheduled) return
@@ -630,6 +756,7 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
           window.removeEventListener('pointerdown', schedule, true)
           try {
             if (alphaRow) alphaRow.remove()
+            if (letmegoRow) letmegoRow.remove()
             if (gridRow) gridRow.remove()
           } catch {
             /* ignore */
@@ -682,6 +809,56 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
       const [floats, setFloats] = useState([])
       const [glass, setGlass] = useState(glassAlpha())
       useEffect(() => subscribeGlassAlpha(setGlass), [])
+      const [lyricOn, setLyricOn] = useState(letmegoOn())
+      useEffect(() => subscribeLetmego(setLyricOn), [])
+      // 🎵 LET ME GO 🎵: watch the streamed assistant block and float short
+      // clauses. Pure client-side text crunching, no model tokens involved.
+      useEffect(() => {
+        if (!lyricOn) return undefined
+        let disposed = false
+        let node = null
+        let baseline = ''
+        const seen = new Set()
+        const tick = () => {
+          if (disposed) return
+          try {
+            const note = readStreamNote()
+            if (!note) return
+            if (note.node !== node) {
+              node = note.node
+              baseline = note.text
+              return
+            }
+            const text = note.text
+            if (!text || text === baseline) return
+            let appended
+            if (text.length > baseline.length && text.startsWith(baseline)) {
+              appended = text.slice(baseline.length)
+            } else {
+              let i = 0
+              const max = Math.min(baseline.length, text.length)
+              while (i < max && baseline.charCodeAt(i) === text.charCodeAt(i)) i += 1
+              appended = text.slice(i)
+            }
+            baseline = text
+            if (!appended || appended.length > 400) return
+            for (const candidate of lyricCandidates(text.slice(-700))) {
+              if (seen.has(candidate.key)) continue
+              seen.add(candidate.key)
+              if (seen.size > 400) seen.delete(seen.values().next().value)
+              if (s.floatQueue.length > 6) continue
+              spawnFloat('', '🎵' + candidate.phrase + '🎵', 'lyric')
+            }
+          } catch {
+            /* never break the widget */
+          }
+        }
+        const timer = window.setInterval(tick, 320)
+        return () => {
+          disposed = true
+          window.clearInterval(timer)
+        }
+      }, [lyricOn])
       const [, bumpLocale] = useState(0)
 
       /* ---- geometry ---- */
@@ -960,6 +1137,7 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
         window.addEventListener('resize', onResize)
         document.addEventListener('visibilitychange', onVisibility)
 
+        setGlassPreview(openCard)
         timers.push(setTimeout(() => refreshAll(), 1200))
         timers.push(setInterval(pollCharges, CHARGE_POLL_MS))
         timers.push(setInterval(pumpFloats, FLOAT_QUEUE_MS))
@@ -1016,6 +1194,7 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
 
         return () => {
           s.mounted = false
+          setGlassPreview(null)
           try {
             if (unsubscribe) unsubscribe()
           } catch {
@@ -1079,6 +1258,8 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
             style: {
               '--wc2-glass': 'rgba(24,38,62,' + (glass / 100).toFixed(2) + ')',
               '--wc2-glass-tail': 'rgba(36,52,82,' + Math.min(0.9, glass / 100 + 0.12).toFixed(2) + ')',
+              '--wc2-sheen': 'rgba(255,255,255,' + (0.05 + (glass / 100) * 0.36).toFixed(3) + ')',
+              '--wc2-sheen2': 'rgba(255,255,255,' + (0.015 + (glass / 100) * 0.13).toFixed(3) + ')',
             },
             role: 'status',
             'aria-live': 'polite',
@@ -1154,6 +1335,11 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
         return () => style.remove()
       }, 'whale-combo: styles')
       ctx.effect(() => installWhaleMenu(t), 'whale-combo: whale menu')
+
+
+
+
+
 
       ctx.slots.inject('shell.overlay', () =>
         ctx.slots.register(
