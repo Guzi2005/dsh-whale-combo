@@ -46,6 +46,7 @@ window.__ModuleLoader__.load({
         'hit': '命中',
         'output': '输出',
         'miss': '未命中',
+        'glassAlpha': '毛玻璃透明度',
         'meta.title': '鲸鱼娘 · 合并数据卡',
         'meta.description': '在鲸鱼娘旁显示余额 / 今日 / 本轮 / 缓存命中 / 峰谷的白色状态气泡，并在计费时播放扣费弹幕。',
       },
@@ -62,6 +63,7 @@ window.__ModuleLoader__.load({
         'hit': 'hit',
         'output': 'output',
         'miss': 'miss',
+        'glassAlpha': 'Glass opacity',
         'meta.title': 'Whale Girl · Merged Card',
         'meta.description': 'White status bubble beside the whale girl: balance, today, this turn, cache hit rate, peak/off-peak, plus charge danmaku.',
       },
@@ -78,6 +80,48 @@ window.__ModuleLoader__.load({
     const FONT = 'Inter, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif'
     const DP_PROVIDERS = ['deepseek-account', 'deepseek-official']
     const WHALE_SELECTOR = '.dshwv-root .dshwv-img, .dshwv-img'
+
+    /* ───────────────────── glass opacity preference ───────────────── */
+    // Adjusted from the whale menu slider; the card reads it through CSS vars.
+    const ALPHA_KEY = 'dsh-whale-combo:glass-alpha'
+    const ALPHA_MIN = 10
+    const ALPHA_MAX = 80
+    const ALPHA_DEFAULT = 26
+    let alphaValue = null
+    const alphaListeners = new Set()
+    function glassAlpha() {
+      if (alphaValue != null) return alphaValue
+      let value = ALPHA_DEFAULT
+      try {
+        const stored = Number(window.localStorage.getItem(ALPHA_KEY))
+        if (Number.isFinite(stored) && stored >= ALPHA_MIN && stored <= ALPHA_MAX) value = Math.round(stored)
+      } catch {
+        /* private mode */
+      }
+      alphaValue = value
+      return value
+    }
+    function setGlassAlpha(next) {
+      const value = Math.max(ALPHA_MIN, Math.min(ALPHA_MAX, Math.round(Number(next) || ALPHA_DEFAULT)))
+      alphaValue = value
+      try {
+        window.localStorage.setItem(ALPHA_KEY, String(value))
+      } catch {
+        /* private mode */
+      }
+      for (const listener of Array.from(alphaListeners)) {
+        try {
+          listener(value)
+        } catch {
+          /* ignore */
+        }
+      }
+      return value
+    }
+    function subscribeGlassAlpha(listener) {
+      alphaListeners.add(listener)
+      return () => alphaListeners.delete(listener)
+    }
 
     /* ──────────────────────── pure helpers ────────────────────────── */
     function isNum(v) {
@@ -211,8 +255,10 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
 /* Whale-widget hides its ☰ trigger until pointer hover; the previous merged
    layer kept it visible and the menu is the only way to change character /
    size / sound, so keep that affordance here. */
-.dshwv-menu-btn{opacity:.95 !important;box-shadow:0 2px 8px rgba(6,12,26,.28)}
+.dshwv-menu-btn{opacity:.95 !important;visibility:visible !important;pointer-events:auto !important;box-shadow:0 2px 8px rgba(6,12,26,.28)}
 .dshwv-menu-btn:hover{opacity:1 !important}
+/* Opacity row injected into the whale menu: reuse its .dshwv-menu-row/.dshwv-range. */
+.wc2-alpha-value{min-width:34px;text-align:right;font-variant-numeric:tabular-nums;opacity:.72}
 
 .wc2-card{position:fixed;z-index:10001;left:0;top:0;display:flex;align-items:center;gap:9px;
   padding:6px 10px;border-radius:13px;box-sizing:border-box;
@@ -221,7 +267,7 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
   background:
     radial-gradient(130% 150% at 10% 0%,rgba(255,255,255,.16),rgba(255,255,255,0) 58%),
     linear-gradient(155deg,rgba(255,255,255,.07),rgba(255,255,255,.02) 45%,rgba(120,160,235,.05)),
-    rgba(24,38,62,.26);
+    var(--wc2-glass, rgba(24,38,62,.26));
   box-shadow:
     inset 0 0 0 1px rgba(22,36,58,.42),
     inset 0 1px 0 rgba(255,255,255,.32),
@@ -236,7 +282,7 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
   transition:opacity .18s ease,transform .18s cubic-bezier(.2,.9,.3,1.2)}
 .wc2-card::after{content:"";position:absolute;right:18px;bottom:-9px;width:18px;height:10px;
   clip-path:polygon(0 0,100% 0,50% 100%);
-  background:rgba(36,52,82,.40);
+  background:var(--wc2-glass-tail, rgba(36,52,82,.40));
   backdrop-filter:blur(26px) saturate(180%);
   -webkit-backdrop-filter:blur(26px) saturate(180%)}
 .wc2-card.wc2-tail-left::after{right:auto;left:18px}
@@ -291,6 +337,83 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
 .wc2-launch:focus-visible{outline:2px solid #22d3ee;outline-offset:2px}
 `
 
+    /* ─────────────────── whale menu integration ───────────────────── */
+    // The whale menu belongs to dsh-whale-widget. Instead of styling a second
+    // settings surface, reuse its own row + slider components (.dshwv-menu-row /
+    // .dshwv-range) to host the glass opacity slider, and drop the appearance /
+    // resource entries the merged card no longer uses.
+    const MENU_DROP_PREFIXES = ['资源管理', '避让滚动条', '隐藏菜单按钮']
+    function installWhaleMenu(translate) {
+      let row = null
+      let scheduled = 0
+      const scan = () => {
+        const menu = document.querySelector('.dshwv-menu')
+        if (!menu) return
+        const view = menu.querySelector('.dshwv-menuview') || menu
+        for (const candidate of Array.from(view.querySelectorAll('.dshwv-menu-row'))) {
+          const text = (candidate.textContent || '').trim()
+          if (MENU_DROP_PREFIXES.some(prefix => text.indexOf(prefix) === 0)) candidate.remove()
+        }
+        // Role import button was kept only for swapping the character artwork.
+        for (const button of Array.from(view.querySelectorAll('.dshwv-roleimport'))) button.remove()
+        if (row && row.isConnected && view.contains(row)) return
+        const next = document.createElement('div')
+        next.className = 'dshwv-menu-row wc2-alpha-row'
+        const label = document.createElement('span')
+        label.textContent = translate('glassAlpha')
+        const input = document.createElement('input')
+        input.type = 'range'
+        input.min = String(ALPHA_MIN)
+        input.max = String(ALPHA_MAX)
+        input.step = '1'
+        input.value = String(glassAlpha())
+        input.className = 'dshwv-range'
+        input.setAttribute('aria-label', translate('glassAlpha'))
+        const value = document.createElement('span')
+        value.className = 'wc2-alpha-value'
+        value.textContent = glassAlpha() + '%'
+        input.addEventListener('input', () => {
+          value.textContent = setGlassAlpha(input.value) + '%'
+        })
+        next.appendChild(label)
+        next.appendChild(input)
+        next.appendChild(value)
+        const rows = Array.from(view.querySelectorAll('.dshwv-menu-row'))
+        const anchor = rows.find(item => (item.textContent || '').trim().indexOf('大小') === 0)
+        if (anchor && anchor.parentNode === view) view.insertBefore(next, anchor.nextSibling)
+        else view.appendChild(next)
+        row = next
+      }
+      const schedule = () => {
+        if (scheduled) return
+        scheduled = window.setTimeout(() => {
+          scheduled = 0
+          try {
+            scan()
+          } catch {
+            /* the menu is not ours to own; never break the widget */
+          }
+        }, 120)
+      }
+      try {
+        scan()
+        window.addEventListener('pointerdown', schedule, true)
+        const timer = window.setInterval(schedule, 1500)
+        return () => {
+          window.clearInterval(timer)
+          window.clearTimeout(scheduled)
+          window.removeEventListener('pointerdown', schedule, true)
+          try {
+            if (row) row.remove()
+          } catch {
+            /* ignore */
+          }
+        }
+      } catch {
+        return () => {}
+      }
+    }
+
     /* ──────────────────────────── component ───────────────────────── */
     function WhaleCombo(props) {
       const { t, ctx } = props
@@ -331,6 +454,8 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
         peak: null,
       })
       const [floats, setFloats] = useState([])
+      const [glass, setGlass] = useState(glassAlpha())
+      useEffect(() => subscribeGlassAlpha(setGlass), [])
       const [, bumpLocale] = useState(0)
 
       /* ---- geometry ---- */
@@ -725,6 +850,10 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
           {
             ref: cardRef,
             className: 'wc2-card' + (open ? ' wc2-open' : ''),
+            style: {
+              '--wc2-glass': 'rgba(24,38,62,' + (glass / 100).toFixed(2) + ')',
+              '--wc2-glass-tail': 'rgba(36,52,82,' + Math.min(0.9, glass / 100 + 0.12).toFixed(2) + ')',
+            },
             role: 'status',
             'aria-live': 'polite',
             title: tipText,
@@ -798,6 +927,7 @@ html.wc2-show-dp [data-token-monitor-balance]{display:block !important;opacity:.
         document.head.appendChild(style)
         return () => style.remove()
       }, 'whale-combo: styles')
+      ctx.effect(() => installWhaleMenu(t), 'whale-combo: whale menu')
       ctx.slots.inject('shell.overlay', () =>
         ctx.slots.register(
           {
