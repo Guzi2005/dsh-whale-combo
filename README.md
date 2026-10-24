@@ -40,7 +40,13 @@
   用纯前端文本算法（不消耗 token）截取 **≤8 个英文单词 / 汉字**的短句；英文小写开头会自动转成大写；
   `Let me` > `Now` > `I` > 其它 优先；`Hmm` / `Yes!` / `Excellent!` 这类单字感叹也不漏。
   命中后两端加 🎵、用扣费弹幕同款样式右对齐完整展示；先进入歌词缓冲队列（按优先级、去重、上限 40 条），
-  再约每 550ms 释放一条；任务结束后最多再唱 5 秒，然后清空缓冲。
+  空槽即发（≥320ms）；任务结束后最多再唱 5 秒，然后清空缓冲。
+  DSH 的思考行默认是**折叠**的，正文并不在 DOM 里；歌词捕捉因此改为从思考行的 React props
+  读取完整文本（展开状态与否都能读到），不再要求手动展开思考块。
+- **🎵 循环队列开关**（☰ 菜单，与 LET ME GO 同行，默认关）：开启后把捕捉到的歌词攒进一个
+  历史池（去重、上限 400 句），空闲时按 620/880/700/1020ms 的四拍节奏循环补位，保证一直有词在唱；
+  旁边「队列容量」滑杆（10–300，仅开关打开时展开）决定循环窗口，**调大容量会立刻从历史池回填**，
+  不会停留在旧的小容量条数上。
 - **角色库（小方块，一键切换）**：☰ 菜单里的角色不再用下拉菜单，改成一行**可点击的小方块缩略图**
   （36px、轻微圆角，选中项描边）；点一下立即换角色。末尾的「＋」方块沿用上游的裁剪 / 导入流程，
   **重建了角色导入**。内置两个预设：**DeepSeek bot**、**长征 bot**（去掉黑底、透明背景，
@@ -126,8 +132,10 @@ dsh plugin --profile <profile> add link:<clone 后的绝对路径>
 角色库复用上游的角色系统：`GET/POST /dsh-whale/roles.json` 读写角色、`/dsh-whale/role-image.png?id=…` 取图像、
 `localStorage['dshw-role']` 记住选择；点击方块时优先点击上游自己的角色面板项（走它的 `applyRole` + 命中图重算），
 面板列表未刷新时回退为直接换 `img.src` 并记录选择（下次加载由上游接管）。
-歌词弹幕读取会话 DOM：`[data-conversation-scroll]` 里最后一个 `[class*="markdown"]` 块的增量文本
-（纯前端算法，不占 token）；宿主若调整这两个选择器，需要同步 `client.js` 里的 `readStreamNote`。
+歌词弹幕读取会话 DOM：`[data-conversation-scroll]` 里的思考行（`[data-variant="think"]`）——
+思考折叠时正文不在 DOM，于是从行的 React props（fiber 上的 `text`）读取完整思考文本；
+展开状态的 `[class*="thinkBody"] [class*="markdown"]` 仅作回退。
+宿主若调整这两个选择器或思考行的数据结构，需要同步 `client.js` 里的 `readStreamNote` / `reasoningRowText`。
 菜单增强也依赖它的 DOM：向 `.dshwv-menu .dshwv-menuview` 注入角色方块行 / `.dshwv-menu-row` + `.dshwv-range`，
 并按行文本移除「资源管理 / 避让滚动条 / 隐藏菜单按钮」，保留（隐藏的）上游角色行以复用其隐藏导入按钮。
 若上游大版本改了这些类名或菜单文案，只需同步 `client.js` 里的 `WHALE_SELECTOR` / `MENU_DROP_PREFIXES` / 注入逻辑。

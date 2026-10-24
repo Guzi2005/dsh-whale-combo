@@ -1,6 +1,7 @@
 /**
  * dsh-whale-combo — browser half.
  *
+ *
  * One surface, contributed to the frame-wide `shell.overlay` slot:
  *   - a frosted status bubble above the dsh-whale-widget whale girl, merging
  *     余额 / 今日 / 缓存命中 / 峰谷 from the dsh-damage-pulse and
@@ -54,6 +55,9 @@ window.__ModuleLoader__.load({
         'role': '角色',
         'roleImport': '导入角色',
         'letmegoTip': '开启后只读思考块的真句首，捕捉 ≤8 个英文单词/汉字的短句（Let me / Now / I 开头优先），用弹幕飘出来',
+        'lyricLoop': '循环队列',
+        'loopCap': '队列容量',
+        'lyricLoopTip': '开启后用循环队列播放歌词：空档时用已捕捉的歌词补位，保证一直有歌词在唱',
         'meta.title': '鲸鱼娘 · 合并数据卡',
         'meta.description': '在鲸鱼娘旁显示余额 / 今日 / 本轮 / 缓存命中 / 峰谷的白色状态气泡，并在计费时播放扣费弹幕。',
       },
@@ -75,6 +79,9 @@ window.__ModuleLoader__.load({
         'role': 'Role',
         'roleImport': 'Import role',
         'letmegoTip': 'Read only the thinking block: float ≤8-word clauses from true sentence starts (Let me / Now / I first) as danmaku',
+        'lyricLoop': 'Loop queue',
+        'loopCap': 'Queue size',
+        'lyricLoopTip': 'Loop the captured lyrics through a queue so there is always a lyric on screen',
         'meta.title': 'Whale Girl · Merged Card',
         'meta.description': 'White status bubble beside the whale girl: balance, today, this turn, cache hit rate, peak/off-peak, plus charge danmaku.',
       },
@@ -85,6 +92,9 @@ window.__ModuleLoader__.load({
     const CHARGE_POLL_MS = 1000
     const TURN_POLL_MS = 5000
     const FLOAT_MS = 2700
+    const LYRIC_MS = 1300
+    const LYRIC_GAP_NEW = 320
+    const LYRIC_LOOP_GAPS = [620, 880, 700, 1020]
     const FLOAT_QUEUE_MS = 850
     const LAYOUT_MS = 500
     const HINT_KEY = 'dsh-whale-combo:hinted-v4'
@@ -251,6 +261,95 @@ window.__ModuleLoader__.load({
     function subscribeLetmego(listener) {
       letmegoListeners.add(listener)
       return () => letmegoListeners.delete(listener)
+    }
+
+    /* ───────────────── 🎵 循环队列 (loop queue) ───────────────────── */
+    const LYRIC_LOOP_KEY = 'dsh-whale-combo:lyric-loop'
+    let lyricLoopValue = null
+    const lyricLoopListeners = new Set()
+    function lyricLoopOn() {
+      if (lyricLoopValue != null) return lyricLoopValue
+      let value = false
+      try {
+        value = window.localStorage.getItem(LYRIC_LOOP_KEY) === '1'
+      } catch {
+        /* private mode */
+      }
+      lyricLoopValue = value
+      return value
+    }
+    function setLyricLoop(next) {
+      const value = !!next
+      lyricLoopValue = value
+      try {
+        window.localStorage.setItem(LYRIC_LOOP_KEY, value ? '1' : '0')
+      } catch {
+        /* private mode */
+      }
+      for (const listener of Array.from(lyricLoopListeners)) {
+        try {
+          listener(value)
+        } catch {
+          /* ignore */
+        }
+      }
+      return value
+    }
+    function subscribeLyricLoop(listener) {
+      lyricLoopListeners.add(listener)
+      return () => lyricLoopListeners.delete(listener)
+    }
+
+    /* ───────────── 🎵 loop-queue capacity preference ─────────────── */
+    const LOOP_CAP_KEY = 'dsh-whale-combo:loop-cap'
+    const LOOP_CAP_MIN = 10
+    const LOOP_CAP_MAX = 300
+    const LOOP_CAP_DEFAULT = 60
+    let loopCapValue = null
+    const loopCapListeners = new Set()
+    function lyricLoopCap() {
+      if (loopCapValue != null) return loopCapValue
+      let value = LOOP_CAP_DEFAULT
+      try {
+        const stored = Number(window.localStorage.getItem(LOOP_CAP_KEY))
+        if (Number.isFinite(stored) && stored >= LOOP_CAP_MIN && stored <= LOOP_CAP_MAX) value = Math.round(stored)
+      } catch {
+        /* private mode */
+      }
+      loopCapValue = value
+      return value
+    }
+    function setLyricLoopCap(next) {
+      const value = Math.max(LOOP_CAP_MIN, Math.min(LOOP_CAP_MAX, Math.round(Number(next) || LOOP_CAP_DEFAULT)))
+      loopCapValue = value
+      try {
+        window.localStorage.setItem(LOOP_CAP_KEY, String(value))
+      } catch {
+        /* private mode */
+      }
+      for (const listener of Array.from(loopCapListeners)) {
+        try {
+          listener(value)
+        } catch {
+          /* ignore */
+        }
+      }
+      try {
+        if (loopHistoryTrim) loopHistoryTrim(value)
+      } catch {
+        /* ignore */
+      }
+      return value
+    }
+    function subscribeLyricLoopCap(listener) {
+      loopCapListeners.add(listener)
+      return () => loopCapListeners.delete(listener)
+    }
+    let loopHistoryTrim = null
+    let loopHistoryCount = () => 0
+    function setLoopHistoryBindings(trim, count) {
+      loopHistoryTrim = typeof trim === 'function' ? trim : null
+      loopHistoryCount = typeof count === 'function' ? count : () => 0
     }
 
     // The opacity slider lives in the whale menu, where the card is usually
@@ -420,6 +519,7 @@ window.__ModuleLoader__.load({
     const LYRIC_MIN_TOKENS = 1
     const LYRIC_DENY = /[`<>{}[\]|\\/=+_*#~^$@]|https?:|www\./i
     const LYRIC_BOUNDARY = /[。．.!！?？;；:：\n\r…]/
+    const LYRIC_LABELS = /^(?:运行命令|正在运行命令|执行命令|读取文件|写入文件|编辑文件|工具调用|调用工具|命令|思考|工具|已完成|已运行)$/
     function lyricIsBoundary(text, index) {
       const ch = text[index]
       if (!ch) return false
@@ -455,6 +555,7 @@ window.__ModuleLoader__.load({
       const phrase = lyricClean(String(text || '').replace(/🎵/g, ' '))
       if (!phrase) return []
       if ((phrase.match(/[A-Za-z\u3400-\u9fff]/g) || []).length < 2) return []
+      if (LYRIC_LABELS.test(phrase)) return []
       if (LYRIC_DENY.test(phrase)) return []
       if (/[()[\]{}"“”‘’]/.test(phrase)) return []
       // A lowercase English opener is still a lyric; capitalise it for display.
@@ -470,6 +571,29 @@ window.__ModuleLoader__.load({
       ]
     }
 
+
+    // DSH's transcript collapses reasoning rows and only renders their markdown
+    // body when the disclosure is open. The row component still receives the
+    // complete `text` prop, reachable from the row's DOM fiber, which keeps the
+    // lyric capture working while the reader never opens the thinking block.
+    function reasoningRowText(el) {
+      try {
+        const key = Object.keys(el).find(name => name.indexOf('__reactFiber$') === 0)
+        if (key) {
+          let fiber = el[key]
+          for (let depth = 0; fiber && depth < 40; depth += 1) {
+            const props = fiber.memoizedProps
+            if (props && typeof props.text === 'string' && typeof props.running === 'boolean') {
+              return props.text
+            }
+            fiber = fiber.return
+          }
+        }
+      } catch {
+        /* fall back to the rendered text */
+      }
+      return el.innerText || ''
+    }
 
     /* ───────────────────── minimal line icons ─────────────────────── */
     const ICONS = {
@@ -588,6 +712,7 @@ window.__ModuleLoader__.load({
 .wc2-float{position:absolute;right:0;bottom:0;display:flex;align-items:baseline;justify-content:flex-end;gap:4px;
   width:154px;white-space:nowrap;font-weight:900;font-variant-numeric:tabular-nums;
   animation:wc2-float-rise ${FLOAT_MS}ms cubic-bezier(.2,.72,.3,1) forwards;will-change:transform,opacity}
+.wc2-float.wc2-lyric{animation-duration:${LYRIC_MS}ms}
 .wc2-float-label{width:42px;text-align:right;color:#6ea2ff;font-size:13px;font-weight:900;
   text-shadow:0 1px 3px rgba(0,0,0,.70),0 0 8px rgba(60,120,255,.35)}
 .wc2-float-amt{width:108px;text-align:left;color:#3f7bf0;font-size:21px;font-weight:900;
@@ -596,9 +721,21 @@ window.__ModuleLoader__.load({
   text-shadow:0 1px 3px rgba(0,0,0,.72),0 0 10px rgba(170,180,194,.28)}
 .wc2-float.wc2-miss .wc2-float-label{color:#8d97a5;text-shadow:0 1px 3px rgba(0,0,0,.72)}
 .wc2-float.wc2-output .wc2-float-amt{color:#5b93ff}
-.wc2-float.wc2-lyric{width:auto}
-.wc2-float.wc2-lyric .wc2-float-amt{width:auto;text-align:right;font-size:19px;color:#7fb0ff;padding-left:2px;
-  text-shadow:0 1px 3px rgba(0,0,0,.72),0 0 12px rgba(96,150,255,.42)}
+.wc2-float.wc2-lyric{width:auto;transition:bottom 280ms cubic-bezier(.2,.72,.3,1)}
+@keyframes wc2-float-insert{0%{opacity:0;transform:translate(-58px,14px) scale(.94)}
+  12%{opacity:1;transform:translate(-20px,2px) scale(1.06)}
+  24%{opacity:1;transform:translate(0,-6px) scale(1)}
+  62%{opacity:1;transform:translate(0,-82px);animation-timing-function:linear}
+  100%{opacity:0;transform:translate(0,-118px) scale(.96)}}
+@keyframes wc2LyricNew{0%{color:#FFFFFF}10%{color:#F6FBFF}38%{color:#AFDCFF}
+  68%{color:#6FA6D2}86%{color:#2E4B63}100%{color:#131518}}
+@keyframes wc2LyricLoop{0%{color:#A9D2F5}40%{color:#74A3CB}72%{color:#3C5B76}100%{color:#131518}}
+.wc2-float.wc2-lyric-new{animation-name:wc2-float-insert;animation-duration:${LYRIC_MS}ms}
+.wc2-float.wc2-lyric-new .wc2-float-amt{font-size:20px;animation:wc2LyricNew ${LYRIC_MS}ms linear forwards;
+  text-shadow:0 0 20px rgba(170,215,255,.70),0 1px 3px rgba(0,0,0,.62)}
+.wc2-float.wc2-lyric-loop .wc2-float-amt{font-size:17px;animation:wc2LyricLoop ${LYRIC_MS}ms linear forwards;
+  text-shadow:0 0 10px rgba(120,170,220,.30),0 1px 3px rgba(0,0,0,.55)}
+.wc2-float.wc2-lyric .wc2-float-amt{width:auto;text-align:right;font-size:19px;padding-left:2px}
 @keyframes wc2-float-rise{
   0%{opacity:0;transform:translate(0,12px) scale(.55)}
   12%{opacity:1;transform:translate(0,3px) scale(1.07)}
@@ -609,6 +746,14 @@ window.__ModuleLoader__.load({
 /* 小鲸鱼记账 (☰ page 2): same look as the menu's first page, tidy, no overflow. */
 .dshwv-usage-sub{font-size:12px!important;color:#203170;max-height:none!important;padding:2px 0 8px!important}
 .dshwv-usage-sub *{min-width:0}
+.wc2-loop-label{margin-left:auto;white-space:nowrap}
+.wc2-switch{position:relative;width:34px;height:18px;padding:0;border-radius:999px;flex:0 0 auto;cursor:pointer;
+  border:1px solid rgba(32,49,112,.35);background:rgba(32,49,112,.16);transition:background .18s ease,border-color .18s ease}
+.wc2-switch .wc2-switch-knob{position:absolute;top:1px;left:1px;width:14px;height:14px;border-radius:50%;background:#fff;
+  box-shadow:0 1px 2px rgba(10,18,32,.28);transition:transform .18s cubic-bezier(.2,.72,.3,1)}
+.wc2-switch.on{background:#2f6fd0;border-color:#2f6fd0}
+.wc2-switch.on .wc2-switch-knob{transform:translateX(16px)}
+.wc2-loop-count{color:#8a94a6;font-size:11px;min-width:30px;text-align:right;font-variant-numeric:tabular-nums}
 .dshwv-usage-sub .dshwv-usage-subtitle{display:none!important}
 .dshwv-usage-sub .dshwv-usage-sec{display:flex;align-items:center;justify-content:space-between;gap:8px;
   overflow:hidden;white-space:nowrap;margin:6px 0 2px!important;padding-bottom:3px!important;color:#203170;
@@ -673,6 +818,8 @@ window.__ModuleLoader__.load({
       let barRow = null
       let barSync = null
       let letmegoRow = null
+      let loopCapRow = null
+      let loopCapSync = null
       let gridRow = null
       let gridEl = null
       let roleImportBtn = null
@@ -967,6 +1114,42 @@ window.__ModuleLoader__.load({
           /* private mode */
         }
       }
+      const ensureLoopCapRow = view => {
+        if (loopCapRow && loopCapRow.isConnected && view.contains(loopCapRow)) return
+        const next = document.createElement('div')
+        next.className = 'dshwv-menu-row wc2-loopcap-row'
+        const label = document.createElement('span')
+        label.textContent = translate('loopCap')
+        const input = document.createElement('input')
+        input.type = 'range'
+        input.min = String(LOOP_CAP_MIN)
+        input.max = String(LOOP_CAP_MAX)
+        input.step = '10'
+        input.value = String(lyricLoopCap())
+        input.className = 'dshwv-range'
+        input.setAttribute('aria-label', translate('loopCap'))
+        const value = document.createElement('span')
+        value.className = 'wc2-alpha-value'
+        value.textContent = lyricLoopCap()
+        const count = document.createElement('span')
+        count.className = 'wc2-loop-count'
+        count.textContent = '(' + loopHistoryCount() + ')'
+        input.addEventListener('input', () => {
+          value.textContent = setLyricLoopCap(input.value)
+        })
+        loopCapSync = subscribeLyricLoopCap(current => {
+          input.value = String(current)
+          value.textContent = String(current)
+        })
+        next.appendChild(label)
+        next.appendChild(input)
+        next.appendChild(value)
+        next.appendChild(count)
+        if (letmegoRow && letmegoRow.parentNode === view) view.insertBefore(next, letmegoRow.nextSibling)
+        else view.appendChild(next)
+        loopCapRow = next
+        next.style.display = lyricLoopOn() ? '' : 'none'
+      }
       const enhanceLedger = () => {
         const sub = document.querySelector('.dshwv-usage-sub')
         if (!sub) return
@@ -1041,6 +1224,32 @@ window.__ModuleLoader__.load({
         input.addEventListener('change', () => setLetmego(input.checked))
         next.appendChild(label)
         next.appendChild(input)
+        // The loop-queue switch shares this row with LET ME GO.
+        const loopLabel = document.createElement('span')
+        loopLabel.className = 'wc2-loop-label'
+        loopLabel.textContent = translate('lyricLoop')
+        const loopSwitch = document.createElement('button')
+        loopSwitch.type = 'button'
+        loopSwitch.className = 'wc2-switch' + (lyricLoopOn() ? ' on' : '')
+        loopSwitch.title = translate('lyricLoopTip')
+        loopSwitch.setAttribute('role', 'switch')
+        loopSwitch.setAttribute('aria-label', 'Loop lyric queue')
+        loopSwitch.setAttribute('aria-checked', lyricLoopOn() ? 'true' : 'false')
+        const knob = document.createElement('span')
+        knob.className = 'wc2-switch-knob'
+        loopSwitch.appendChild(knob)
+        const syncCapRow = on => {
+          if (!loopCapRow) return
+          loopCapRow.style.display = on ? '' : 'none'
+        }
+        loopSwitch.addEventListener('click', () => {
+          const on = setLyricLoop(!(loopSwitch.classList.contains('on')))
+          loopSwitch.classList.toggle('on', on)
+          loopSwitch.setAttribute('aria-checked', on ? 'true' : 'false')
+          syncCapRow(on)
+        })
+        next.appendChild(loopLabel)
+        next.appendChild(loopSwitch)
         const rows = Array.from(view.querySelectorAll('.dshwv-menu-row'))
         const anchor = rows.find(item => (item.textContent || '').trim().indexOf('大小') === 0)
         if (anchor && anchor.parentNode === view) view.insertBefore(next, anchor.nextSibling)
@@ -1059,6 +1268,14 @@ window.__ModuleLoader__.load({
         ensureAlphaRow(view)
         ensureBarRow(view)
         ensureLetmegoRow(view)
+        ensureLoopCapRow(view)
+        if (loopCapRow) {
+          const counter = loopCapRow.querySelector('.wc2-loop-count')
+          if (counter) {
+            const text = '(' + loopHistoryCount() + ')'
+            if (counter.textContent !== text) counter.textContent = text
+          }
+        }
         enhanceLedger()
       }
       const schedule = () => {
@@ -1090,6 +1307,12 @@ window.__ModuleLoader__.load({
               /* ignore */
             }
             if (letmegoRow) letmegoRow.remove()
+            if (loopCapRow) loopCapRow.remove()
+            try {
+              if (loopCapSync) loopCapSync()
+            } catch {
+              /* ignore */
+            }
             if (gridRow) gridRow.remove()
           } catch {
             /* ignore */
@@ -1124,6 +1347,14 @@ window.__ModuleLoader__.load({
         wwBalance: null,
         wwTurn: null,
         floatSeq: 0,
+        lyricLane: 0,
+        lyricLoop: [],
+        lyricPool: [],
+        lyricLoopIndex: 0,
+        lyricLoopPaintAt: 0,
+        lyricLoopBeat: 0,
+        lyricPaintAt: 0,
+        lyricActive: 0,
         floatQueue: [],
         lyricQueue: [],
         lyricLastAt: 0,
@@ -1163,6 +1394,17 @@ window.__ModuleLoader__.load({
       }, [])
       const [lyricOn, setLyricOn] = useState(letmegoOn())
       useEffect(() => subscribeLetmego(setLyricOn), [])
+      const [loopOn, setLoopOn] = useState(lyricLoopOn())
+      useEffect(() => subscribeLyricLoop(setLoopOn), [])
+      useEffect(() => {
+        if (loopOn) return
+        // Leaving loop mode discards the ring: lines sung in one-shot mode are
+        // not leftovers to replay when the loop is switched back on.
+        s.lyricLoop.length = 0
+        s.lyricPool.length = 0
+        s.lyricLoopIndex = 0
+        s.lyricLoopBeat = 0
+      }, [loopOn])
 
 
       // 🎵 LET ME GO 🎵: reads ONLY the thinking block and only true sentence
@@ -1172,32 +1414,85 @@ window.__ModuleLoader__.load({
         if (!lyricOn) return undefined
         let disposed = false
         const cursors = new Map()
+        const toolSeen = new Set()
+        let toolScanAt = 0
         const seen = new Set()
         const emit = list => {
           list.sort((a, b) => b.priority - a.priority)
           s.lyricLastAt = Date.now()
           const queue = s.lyricQueue
+          const fresh = []
           for (const candidate of list) {
             if (seen.has(candidate.key)) continue
             seen.add(candidate.key)
             if (seen.size > 500) seen.delete(seen.values().next().value)
-            queue.push({ phrase: candidate.phrase, priority: candidate.priority })
+            fresh.push({ phrase: candidate.phrase, priority: candidate.priority })
           }
-          if (queue.length > 1) queue.sort((a, b) => b.priority - a.priority)
+          if (!fresh.length) return
+          if (fresh.length > 1) fresh.sort((a, b) => b.priority - a.priority)
+          // Freshly captured lines are inserted at the head of the buffer.
+          queue.unshift(...fresh)
           if (queue.length > 40) queue.length = 40
+          if (lyricLoopOn()) {
+            // The pool keeps more history than the queue itself: when the user
+            // raises the capacity, lines the old smaller queue dropped become
+            // available again instead of staying lost.
+            const pool = s.lyricPool
+            for (const item of fresh) {
+              if (pool.indexOf(item.phrase) === -1) pool.push(item.phrase)
+            }
+            if (pool.length > 400) pool.splice(0, pool.length - 400)
+            const cap = lyricLoopCap()
+            s.lyricLoop = pool.slice(Math.max(0, pool.length - cap))
+            if (s.lyricLoopIndex >= s.lyricLoop.length) s.lyricLoopIndex = 0
+          }
+        }
+        // A completed tool/command row is scanned once, whole.
+        const emitText = text => {
+          const found = []
+          let start = 0
+          for (let index = 0; index < text.length; index += 1) {
+            if (!lyricIsBoundary(text, index)) continue
+            const segment = text.slice(start, index)
+            start = index + 1
+            if (segment) found.push(...lyricCandidates(segment))
+          }
+          const tail = text.slice(start)
+          if (tail.trim()) found.push(...lyricCandidates(tail))
+          if (found.length) emit(found)
         }
         const tick = () => {
           if (disposed) return
           try {
             const scroller = document.querySelector('[data-conversation-scroll]')
             if (!scroller) return
-            const blocks = Array.from(
-              scroller.querySelectorAll('[class*="think"] [class*="markdown"], [class*="thinkBody"] [class*="markdown"]'),
-            ).filter(block => !block.closest('pre'))
-            if (!blocks.length) return
-            for (const block of blocks) {
-              const text = block.innerText || ''
+            // Reasoning rows are collapsed by default, so their markdown body
+            // is not in the DOM. The row's React props still hold the complete
+            // text; expanded bodies remain as a fallback when that is absent.
+            const rows = Array.from(scroller.querySelectorAll('[data-variant="think"]'))
+            const blocks = rows.length
+              ? []
+              : Array.from(
+                  scroller.querySelectorAll('[class*="think"] [class*="markdown"], [class*="thinkBody"] [class*="markdown"]'),
+                ).filter(block => !block.closest('pre'))
+            if (!rows.length && !blocks.length) return
+            for (const block of rows.length ? rows : blocks) {
+              const text = rows.length ? reasoningRowText(block) : block.innerText || ''
               const cursor = cursors.get(block) || { scanned: 0 }
+              if (!text && cursor.lastText) {
+                // The thinking block collapsed (or was cleared): flush the tail
+                // that never got a closing punctuation mark.
+                const tail = lyricClean(cursor.lastText.slice(cursor.scanned))
+                if (tail) {
+                  const flushed = lyricCandidates(tail)
+                  if (flushed.length) emit(flushed)
+                }
+                cursor.lastText = ''
+                cursor.scanned = 0
+                cursors.set(block, cursor)
+                continue
+              }
+              if (text) cursor.lastText = text
               if (text.length < cursor.scanned) cursor.scanned = 0
               const region = text.slice(cursor.scanned)
               const found = []
@@ -1221,8 +1516,8 @@ window.__ModuleLoader__.load({
                 const stable = Date.now() - (cursor.holdAt || 0)
                 const atGap = /[\s、，,]$/.test(trailing)
                 const ready =
-                  (trailingTokens >= 2 && (atGap ? stable >= 120 : stable >= 260)) ||
-                  (trailingTokens === 1 && stable >= 300)
+                  (trailingTokens >= 2 && (atGap ? stable >= 50 : stable >= 110)) ||
+                  (trailingTokens === 1 && stable >= 140)
                 if (ready) {
                   const provisional = lyricCandidates(trailingClean)
                   if (provisional.length) found.push(...provisional)
@@ -1232,20 +1527,42 @@ window.__ModuleLoader__.load({
               cursors.set(block, cursor)
               if (found.length) emit(found)
             }
-            if (cursors.size > 8) {
+            if (cursors.size > 400) {
               const keys = Array.from(cursors.keys())
-              for (const key of keys.slice(0, keys.length - 8)) cursors.delete(key)
+              for (const key of keys.slice(0, keys.length - 400)) cursors.delete(key)
+            }
+            // Tool / command rows are complete when they appear: read them at
+            // once, but only scan the newest slice and at a slower cadence.
+            const toolRows = []
+            const startedAt = Date.now()
+            if (startedAt - toolScanAt > 700) {
+              toolScanAt = startedAt
+              const scope = Array.from(scroller.querySelectorAll('div, span, p')).slice(-500)
+              for (const el of scope) {
+                const text = (el.textContent || '').trim()
+                if (!text || text.length > 320) continue
+                if (!/^(运行命令|正在运行命令|执行命令|读取文件|写入文件|编辑文件|工具调用|调用工具|命令)/.test(text)) continue
+                toolRows.push(el)
+              }
+            }
+            for (const row of toolRows) {
+              if (toolSeen.has(row)) continue
+              if (toolRows.some(other => other !== row && row.contains(other))) continue
+              toolSeen.add(row)
+              if (toolSeen.size > 80) toolSeen.delete(toolSeen.values().next().value)
+              const text = row.innerText || ''
+              if (text) emitText(text)
             }
           } catch {
             /* never break the widget */
           }
         }
-        const timer = window.setInterval(tick, 200)
+        const timer = window.setInterval(tick, 120)
         return () => {
           disposed = true
           window.clearInterval(timer)
         }
-      }, [lyricOn])
+      }, [lyricOn, loopOn])
       // Release buffered lyrics one by one so a burst of captured clauses still
       // reads as a steady stream of danmaku.
       useEffect(() => {
@@ -1255,20 +1572,44 @@ window.__ModuleLoader__.load({
         }
         const timer = window.setInterval(() => {
           try {
-            // After the turn ends, keep singing for at most five more seconds.
-            if (Date.now() - (s.lyricLastAt || 0) > 5000) {
+            const now = Date.now()
+            // Loop off: the buffer is never replayed — it only carries the lines
+            // captured from the live thinking text, and stops five seconds after
+            // the last capture.
+            if (!loopOn && now - (s.lyricLastAt || 0) > 5000) {
               if (s.lyricQueue.length) s.lyricQueue.length = 0
               return
             }
-            if (!s.lyricQueue.length) return
-            const next = s.lyricQueue.shift()
-            paintLyric(next.phrase)
+            // New lines jump the queue and are painted as soon as a slot frees.
+            if (s.lyricQueue.length) {
+              if (s.lyricActive < 3 && now - (s.lyricPaintAt || 0) >= LYRIC_GAP_NEW) {
+                const next = s.lyricQueue.shift()
+                s.lyricPaintAt = now
+                paintLyric(next.phrase, true)
+              }
+              return
+            }
+            if (loopOn) {
+              // Loop queue: steady rhythm so it reads like continuous singing.
+              if (s.lyricActive >= 3) return
+              if (!s.lyricLoop.length) return
+              const gaps = LYRIC_LOOP_GAPS
+              const gap = gaps[s.lyricLoopBeat % gaps.length]
+              if (now - (s.lyricLoopPaintAt || 0) < gap) return
+              s.lyricLoopBeat += 1
+              s.lyricLoopPaintAt = now
+              s.lyricPaintAt = now
+              const phrase = s.lyricLoop[s.lyricLoopIndex % s.lyricLoop.length]
+              s.lyricLoopIndex += 1
+              paintLyric(phrase, false)
+              return
+            }
           } catch {
             /* never break the widget */
           }
-        }, 600)
+        }, 120)
         return () => window.clearInterval(timer)
-      }, [lyricOn])
+      }, [lyricOn, loopOn])
       const [, bumpLocale] = useState(0)
 
       /* ---- geometry ---- */
@@ -1437,14 +1778,28 @@ window.__ModuleLoader__.load({
       }
       // Lyrics are already paced by their own buffer, so paint them directly
       // instead of waiting for the charge-danmaku pump.
-      function paintLyric(text) {
+      function withLyricSlots(list) {
+        const ids = list.filter(entry => entry.kind === 'lyric').map(entry => entry.id)
+        const total = ids.length
+        return list.map(entry => {
+          if (entry.kind !== 'lyric') return entry
+          const order = ids.indexOf(entry.id)
+          return { ...entry, lane: Math.min(2, total - 1 - order) }
+        })
+      }
+      function paintLyric(text, fresh) {
         if (!s.mounted) return
         s.floatSeq += 1
         const id = s.floatSeq
-        setFloats(list => list.concat([{ id, label: '', text: '🎵' + text + '🎵', kind: 'lyric' }]))
+        const tone = fresh ? 'new' : 'loop'
+        s.lyricActive += 1
+        setFloats(list =>
+          withLyricSlots(list.concat([{ id, label: '', text: '🎵' + text + '🎵', kind: 'lyric', tone }])),
+        )
         setTimeout(() => {
-          if (s.mounted) setFloats(list => list.filter(entry => entry.id !== id))
-        }, FLOAT_MS + 250)
+          s.lyricActive = Math.max(0, s.lyricActive - 1)
+          if (s.mounted) setFloats(list => withLyricSlots(list.filter(entry => entry.id !== id)))
+        }, LYRIC_MS + 250)
       }
       function handleCharge(ev) {
         if (!ev || typeof ev !== 'object') return
@@ -1560,6 +1915,15 @@ window.__ModuleLoader__.load({
 
         setGlassPreview(openCard)
         setCardReflow(layout)
+        setLoopHistoryBindings(
+          () => {
+            const cap = lyricLoopCap()
+            const pool = s.lyricPool
+            s.lyricLoop = pool.slice(Math.max(0, pool.length - cap))
+            if (s.lyricLoopIndex >= s.lyricLoop.length) s.lyricLoopIndex = 0
+          },
+          () => s.lyricLoop.length,
+        )
         timers.push(setTimeout(() => refreshAll(), 1200))
         timers.push(setInterval(pollCharges, CHARGE_POLL_MS))
         timers.push(setInterval(pumpFloats, FLOAT_QUEUE_MS))
@@ -1618,6 +1982,7 @@ window.__ModuleLoader__.load({
           s.mounted = false
           setGlassPreview(null)
           setCardReflow(null)
+          setLoopHistoryBindings(null)
           try {
             if (unsubscribe) unsubscribe()
           } catch {
@@ -1665,10 +2030,13 @@ window.__ModuleLoader__.load({
               'span',
               {
                 key: item.id,
+                style: item.kind === 'lyric' ? { bottom: (item.lane || 0) * 44 + 'px' } : undefined,
                 className:
                   'wc2-float' +
                   (item.kind === 'miss' ? ' wc2-miss' : item.kind === 'output' ? ' wc2-output' : '') +
-                  (item.kind === 'lyric' ? ' wc2-lyric' : ''),
+                  (item.kind === 'lyric'
+                    ? ' wc2-lyric' + (item.tone === 'new' ? ' wc2-lyric-new' : ' wc2-lyric-loop')
+                    : ''),
               },
               item.label ? h('span', { className: 'wc2-float-label' }, item.label) : null,
               h('span', { className: 'wc2-float-amt' }, item.text),
@@ -1761,6 +2129,21 @@ window.__ModuleLoader__.load({
         return () => style.remove()
       }, 'whale-combo: styles')
       ctx.effect(() => installWhaleMenu(t), 'whale-combo: whale menu')
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
